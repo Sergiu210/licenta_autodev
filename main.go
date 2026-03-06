@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -37,6 +38,16 @@ EXEMPLE:
 `
 
 type FileCache map[string]string
+
+type PlanStep struct {
+	Action       string `json:"action"`       // "create_file", "edit_file", "execute_command"
+	FilePath     string `json:"file_path"`    // Calea fișierului (dacă e cazul)
+	Instructions string `json:"instructions"` // Ce trebuie să facă Qwen sau ce comandă să ruleze
+}
+
+type ExecutionPlan struct {
+	Steps []PlanStep `json:"steps"`
+}
 
 // --- Funcții de Caching și Citire ---
 
@@ -278,6 +289,14 @@ var autoDevTools = []Tool{
 func handleToolCall(toolName string, args map[string]interface{}, coderModel string, projectContext string) string {
 	switch toolName {
 
+	case "toolCreateDirectory":
+		path, _ := args["dirPath"].(string)
+
+		if err := os.MkdirAll(path, 0755); err != nil {
+			return fmt.Sprintf("Eroare la crearea directorului %s: %v", path, err)
+		}
+		return fmt.Sprintf("Directorul `%s` a fost creat cu succes.", path)
+
 	case "toolExecuteCommand":
 		cmdRaw, ok := args["command"].(string)
 		if !ok {
@@ -310,52 +329,105 @@ func handleToolCall(toolName string, args map[string]interface{}, coderModel str
 		path, _ := args["filePath"].(string)
 		instructions, _ := args["instructions"].(string)
 
-		approved, feedback := askUserConfirmation(fmt.Sprintf("Creare fișier: `%s`\n   Instrucțiuni trimise către Qwen: %s", path, instructions))
+		approved, feedback := askUserConfirmation(fmt.Sprintf("Creare fișier(e) pornind de la: `%s`\n   Instrucțiuni trimise către Qwen: %s", path, instructions))
 		if !approved {
 			return feedback
 		}
 
-		if _, err := os.Stat(path); err == nil {
-			return fmt.Sprintf("Eroare: Fișierul %s există deja. Folosește toolEditFile.", path)
-		}
-
 		fmt.Printf("\n[Sub-Agent] 🧠 Apelez %s pentru a genera codul...\n", coderModel)
-		prompt := fmt.Sprintf(`
-Ești un expert programator.
 
+		// 1. Modificăm promptul pentru a impune un format strict multi-fișier
+		prompt := fmt.Sprintf(`Ești un expert programator.
 Ai acces la următorul proiect existent.
 
 ================= PROIECT EXISTENT =================
 %s
 ====================================================
 
-Scrie codul complet pentru fișierul cerut.
-
 CERINȚĂ:
 %s
 
-Returnează DOAR codul într-un bloc markdown.
-`, projectContext, instructions)
+Calea principală sugerată pentru creare este: %s
+
+IMPORTANT: Trebuie să returnezi codul folosind EXACT acest format pentru FIECARE fișier pe care îl generezi (chiar dacă generezi unul singur). Nu adăuga alte explicații, returnează DOAR blocurile în acest format:
+
+[FILE: calea/catre/fisier.ext]
+%s
+codul complet aici
+%s
+`, projectContext, instructions, path, "```", "```")
 
 		resp, err := CallOllamaGenerate(coderModel, prompt)
 		if err != nil {
 			return fmt.Sprintf("Eroare la generarea codului cu %s: %v", coderModel, err)
 		}
 
-		cleanCode := extractCodeFromMarkdown(resp)
+		// 2. Logica de extragere a mai multor fișiere
+		filesCreated := 0
+		var outputLog strings.Builder
 
-		dir := filepath.Dir(path)
-		os.MkdirAll(dir, 0755)
-		if err := os.WriteFile(path, []byte(cleanCode), 0644); err != nil {
-			return fmt.Sprintf("Eroare la scriere pe disc: %v", err)
+		// Împărțim răspunsul după marcajul nostru custom
+		parts := strings.Split(resp, "[FILE: ")
+
+		// Dacă modelul nu a respectat deloc formatul (Fallback pentru un singur fișier)
+		if len(parts) <= 1 && !strings.Contains(resp, "[FILE:") {
+			cleanCode := extractCodeFromMarkdown(resp)
+			dir := filepath.Dir(path)
+			os.MkdirAll(dir, 0755)
+			if err := os.WriteFile(path, []byte(cleanCode), 0644); err != nil {
+				return fmt.Sprintf("Eroare la scriere pe disc pentru %s: %v", path, err)
+			}
+			return fmt.Sprintf("✅ Fișierul `%s` a fost generat (Fallback single-file).", path)
 		}
-		return fmt.Sprintf("Fișierul a fost generat de %s și salvat cu succes.", coderModel)
 
+		// 3. Iterăm prin blocurile găsite și le salvăm pe disc
+		for _, part := range parts {
+			if strings.TrimSpace(part) == "" {
+				continue // Sărim peste bucățile goale (ex: dinainte de primul [FILE:)
+			}
+
+			// Căutăm unde se închide paranteza pentru calea fișierului
+			endBracket := strings.Index(part, "]")
+			if endBracket == -1 {
+				continue
+			}
+
+			// Extragem calea și restul textului (care e codul)
+			filePath := strings.TrimSpace(part[:endBracket])
+			fileContentRaw := part[endBracket+1:]
+
+			// Folosim funcția ta existentă ca să scoatem codul efectiv dintre backticks (```)
+			cleanCode := extractCodeFromMarkdown(fileContentRaw)
+			if cleanCode == "" {
+				continue
+			}
+
+			// Salvăm pe disc
+			dir := filepath.Dir(filePath)
+			os.MkdirAll(dir, 0755) // Creăm automat folderele dacă nu există
+
+			if err := os.WriteFile(filePath, []byte(cleanCode), 0644); err != nil {
+				outputLog.WriteString(fmt.Sprintf("❌ Eroare salvare `%s`: %v\n", filePath, err))
+				continue
+			}
+
+			outputLog.WriteString(fmt.Sprintf("✅ `%s` creat cu succes.\n", filePath))
+			filesCreated++
+		}
+
+		if filesCreated == 0 {
+			return "⚠️ LLM-ul a răspuns, dar nu s-au putut extrage fișiere valide. Incearcă să reformulezi cerința."
+		}
+
+		return fmt.Sprintf("Operațiune încheiată. %d fișiere salvate:\n%s", filesCreated, outputLog.String())
 	case "toolEditFile":
 		path, _ := args["filePath"].(string)
 		instructions, _ := args["instructions"].(string)
+		if isFileProtected(path) {
+			return "Eroare: Acces interzis. Nu poți modifica fișiere de sistem sau biblioteci externe!"
+		}
 
-		approved, feedback := askUserConfirmation(fmt.Sprintf("Modificare fișier: `%s`\n   Instrucțiuni reparare către Qwen: %s", path, instructions))
+		approved, feedback := askUserConfirmation(fmt.Sprintf("Modificare fișier: `%s`\n   Instrucțiuni reparare către Coder: %s", path, instructions))
 		if !approved {
 			return feedback
 		}
@@ -366,24 +438,23 @@ Returnează DOAR codul într-un bloc markdown.
 		}
 
 		fmt.Printf("\n[Sub-Agent] 🧠 Apelez %s pentru a repara/modifica fișierul...\n", coderModel)
-		prompt := fmt.Sprintf(`
-Ești un expert programator.
 
-Acesta este proiectul complet:
+		// Prompt OPTIMIZAT: Fără 'projectContext', doar conținutul strict al fișierului!
+		prompt := fmt.Sprintf(`Ești un expert programator.
 
-================= PROIECT =================
+Trebuie să modifici următorul fișier conform cerinței.
+
+================= FIȘIER CURENT (%s) =================
 %s
-===========================================
-
-Trebuie să modifici următorul fișier.
+======================================================
 
 CERINȚĂ MODIFICARE:
 %s
 
-FIȘIER CURENT: %s
-
-Returnează DOAR fișierul complet modificat într-un bloc markdown.
-`, projectContext, instructions, string(currentContent))
+REGULI:
+1. Returnează DOAR codul complet modificat pentru acest fișier într-un bloc markdown (fără explicații suplimentare).
+2. Păstrează restul codului din fișier intact, modifică doar ce se cere.
+`, path, string(currentContent), instructions)
 
 		resp, err := CallOllamaGenerate(coderModel, prompt)
 		if err != nil {
@@ -478,6 +549,89 @@ func classifyIntent(userInput string, modelName string) string {
 	}
 	return "CHAT"
 }
+func generateExecutionPlan(plannerModel, userInput, projectTree string) (*ExecutionPlan, error) {
+	prompt := fmt.Sprintf(`Ești arhitectul strict al unui sistem AI. 
+Scopul tău este să generezi un JSON cu pași, analizând harta de fișiere de mai jos.
+
+ARBORELE FIȘIERELOR EXISTENTE (Nu ai acces la conținutul lor, doar la nume):
+===========================
+%s
+===========================
+
+CERINȚA UTILIZATORULUI: "%s"
+
+REGULI ABSOLUTE DE PLANIFICARE:
+1. ALEGE FIȘIERUL: Dacă utilizatorul cere o modificare, uită-te în "ARBORELE FIȘIERELOR EXISTENTE". Dacă fișierul apare acolo, folosește OBLIGATORIU acțiunea "edit_file" cu calea sa exactă.
+2. CUM FUNCȚIONEAZĂ "edit_file": Când tu dai comanda "edit_file", sistemul nostru din spate va citi automat conținutul fișierului de pe disc și îl va trimite Coder-ului. Tu trebuie doar să îi scrii instrucțiunile logice (ex: "Modifică culoarea titlului în roșu").
+3. CREARE: Folosește "create_file" DOAR dacă fișierul nu există în arbore și a fost cerut explicit.
+4. FORMAT: Returnează DOAR un JSON valid, fără explicații.
+
+Exemplu format așteptat:
+{
+  "steps": [
+    {
+      "action": "edit_file",
+      "file_path": "blog/post.html",
+      "instructions": "Schimbă culoarea titlului H1 în roșu folosind CSS inline sau style."
+    }
+  ]
+}
+`, projectTree, userInput)
+	reqBody := ChatRequest{
+		Model: plannerModel,
+		Messages: []ChatMessage{
+			{Role: "user", Content: prompt},
+		},
+		Stream: false,
+		Options: map[string]interface{}{
+			"temperature": 0.1, // Temperatură mică pentru a forța un output determinist
+		},
+	}
+
+	// Notă: Ollama suportă forțarea JSON-ului dacă specifici formatul în request,
+	// dar la nivelul API-ului curent din `ChatRequest`-ul tău, adăugăm manual în structură dacă e nevoie,
+	// sau ne bazăm pe instrucțiunile din prompt.
+
+	jsonData, _ := json.Marshal(reqBody)
+	resp, err := http.Post(ollamaBaseURL+"/chat", "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	var chatResp ChatResponse
+	json.Unmarshal(body, &chatResp)
+
+	// Extragem JSON-ul din răspuns în caz că modelul a mai adăugat text "Here is the plan:"
+	jsonStr, found := extractJSONFromText(chatResp.Message.Content)
+	if !found {
+		// Fallback: încercăm să parsăm direct tot răspunsul
+		jsonStr = chatResp.Message.Content
+	}
+
+	var plan ExecutionPlan
+	if err := json.Unmarshal([]byte(jsonStr), &plan); err != nil {
+		return nil, fmt.Errorf("Eroare la parsarea planului JSON: %v. Răspuns brut: %s", err, jsonStr)
+	}
+
+	return &plan, nil
+}
+func isFileProtected(path string) bool {
+	// Listează căile sau directoarele care NU trebuie atinse niciodată
+	protectedPaths := []string{
+		"AppData",
+		"site-packages",
+		"Lib\\site-packages",
+		"Python313",
+	}
+	for _, p := range protectedPaths {
+		if strings.Contains(path, p) {
+			return true
+		}
+	}
+	return false
+}
 func main() {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -485,34 +639,7 @@ func main() {
 		return
 	}
 
-	// --- 1. SCANARE ---
-	cache := loadCache(cwd)
-	newCache := make(FileCache)
-	var contextBuilder strings.Builder
-
-	filepath.Walk(cwd, func(path string, info os.FileInfo, err error) error {
-		if err == nil && !info.IsDir() {
-			relPath, _ := filepath.Rel(cwd, path)
-			if relPath != cacheFileName && !strings.HasPrefix(info.Name(), "autodev") && !strings.Contains(path, "node_modules") {
-				textContent, _ := getContent(path)
-
-				currentHash := computeHash([]byte(textContent))
-				newCache[relPath] = currentHash
-
-				// Folosim variabila cache pentru a verifica dacă fișierul este nou/modificat
-				oldHash, exists := cache[relPath]
-				if !exists || oldHash != currentHash {
-					fmt.Printf("[Indexat] %s\n", relPath)
-				}
-
-				contextBuilder.WriteString(fmt.Sprintf("\n--- Fișier: %s ---\n%s\n", relPath, textContent))
-			}
-		}
-		return nil
-	})
-	saveCache(cwd, newCache)
-
-	// --- 2. DETECTARE MODELE PENTRU ARHITECTURA MASTER-WORKER ---
+	// --- DETECTARE MODELE PENTRU ARHITECTURA MASTER-WORKER ---
 	modele, err := GetLocalModels()
 	if err != nil || len(modele) == 0 {
 		fmt.Println("⚠️ Eroare Ollama sau niciun model instalat.")
@@ -544,13 +671,72 @@ func main() {
 
 	scanner := bufio.NewScanner(os.Stdin)
 	var conversationHistory []ChatMessage
+	var autoPrompt string // <--- Variabilă pentru Auto-Reparare
 
 	for {
-		fmt.Print("\n> Cerința ta: ")
-		if !scanner.Scan() {
-			break
+		// --- 1. SCANARE PROASPĂTĂ (Mutată aici pentru a citi mereu modificările noi) ---
+		cache := loadCache(cwd)
+		newCache := make(FileCache)
+		var contextBuilder strings.Builder
+		// --- 1. SCANARE PROASPĂTĂ (Construim doar ARBORELE de fișiere) ---
+		cache = loadCache(cwd)
+		newCache = make(FileCache)
+
+		var treeBuilder strings.Builder
+		treeBuilder.WriteString("📁 Rădăcină Proiect:\n")
+
+		filepath.Walk(cwd, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return nil
+			}
+
+			// IGNORĂM complet folderele mari/inutile pentru a nu pierde timpul
+			if info.IsDir() {
+				n := info.Name()
+				if n == "node_modules" || n == ".git" || n == ".venv" || n == "venv" || n == "__pycache__" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+
+			// Dacă este fișier valid
+			relPath, _ := filepath.Rel(cwd, path)
+			if relPath != cacheFileName && !strings.HasPrefix(info.Name(), "autodev") {
+
+				// Păstrăm logica ta de cache pentru a afișa ce s-a modificat pe disc
+				textContent, _ := getContent(path)
+				currentHash := computeHash([]byte(textContent))
+				newCache[relPath] = currentHash
+
+				oldHash, exists := cache[relPath]
+				if !exists || oldHash != currentHash {
+					fmt.Printf("[Detectat/Modificat] 📄 %s\n", relPath)
+				}
+
+				// ADĂUGĂM DOAR CALEA ÎN ARBORE (Fără conținut!)
+				treeBuilder.WriteString(fmt.Sprintf("  - %s\n", relPath))
+			}
+			return nil
+		})
+		saveCache(cwd, newCache)
+
+		// Salvăm structura pentru a o trimite Planificatorului
+		projectTree := treeBuilder.String()
+
+		// --- 2. CITIRE INPUT SAU AUTO-PROMPT ---
+		var userInput string
+		if autoPrompt != "" {
+			userInput = autoPrompt
+			fmt.Println("\n🔄 [Auto-Recuperare] Trimit automat eroarea către Planificator...")
+			autoPrompt = "" // Resetăm pentru a nu bucla la infinit
+		} else {
+			fmt.Print("\n> Cerința ta: ")
+			if !scanner.Scan() {
+				break
+			}
+			userInput = scanner.Text()
 		}
-		userInput := scanner.Text()
+
 		if strings.ToLower(userInput) == "exit" {
 			break
 		}
@@ -558,7 +744,7 @@ func main() {
 			continue
 		}
 
-		// 1. Clasificăm intenția
+		// 3. Clasificăm intenția
 		intent := classifyIntent(userInput, plannerModel)
 		fmt.Printf("[Sistem] Intenție detectată: %s\n", intent)
 
@@ -566,102 +752,111 @@ func main() {
 			// --- LOGICA DE CHAT SIMPLU ---
 			mesajeChat := append(conversationHistory, ChatMessage{Role: "user", Content: userInput})
 
-			// Prompt simplu, fără tool-uri
 			mesajeChat = append([]ChatMessage{{
 				Role:    "system",
 				Content: "Ești un asistent util. Răspunde direct la întrebarea utilizatorului. Nu menționa fișierele din proiect dacă nu ești întrebat de ele.",
 			}}, mesajeChat...)
 
-			responseMsg, err := CallOllamaChat(plannerModel, mesajeChat, nil) // nil = fără tool-uri
+			responseMsg, err := CallOllamaChat(plannerModel, mesajeChat, nil)
 			if err == nil {
 				fmt.Println("\n🗣️ [Asistent]:", responseMsg.Content)
 				conversationHistory = append(conversationHistory, ChatMessage{Role: "user", Content: userInput}, responseMsg)
 			}
-			continue // Trecem la următoarea întrebare, sărim peste bucla de iterații/tool-uri
+			continue
 		}
 
-		// --- LOGICA DE CODING (Dacă intent == "CODE") ---
-		conversationHistory = append(conversationHistory, ChatMessage{Role: "user", Content: userInput})
+		// --- LOGICA DE CODING (Intent == "CODE") ---
+		fmt.Printf("\n[Planificator] 🧠 `%s` analizează cerința și creează planul de acțiune...\n", plannerModel)
 
-		maxIterations := 5
-		for currentIteration := 1; currentIteration <= maxIterations; currentIteration++ {
-			var promptBuilder strings.Builder
-			promptBuilder.WriteString("Ești AutoDev, un manager de proiect software inteligent.\n")
-			promptBuilder.WriteString("Tu NU scrii cod direct. Rolul tău este să interacționezi cu utilizatorul și să de-legi munca asistentului tău expert în cod (Coder).\n")
-			promptBuilder.WriteString("### RESTRICȚII STRICTE PENTRU PLANIFICATOR:\n")
-			promptBuilder.WriteString("1. DISPONIBILITATE TOOL-URI: Ai voie să folosești DOAR: toolOpenFile, toolCreateFile, toolEditFile și toolExecuteCommand. NU inventa tool-uri precum 'toolListFiles' sau 'toolSearch'.\n")
-			promptBuilder.WriteString("2. CĂI DE FIȘIERE: Folosește DOAR căi relative (ex: 'main.go', 'data/config.json'). NU folosi căi absolute de tipul '/home/user/...' sau 'C:\\Users\\...'.\n")
-			promptBuilder.WriteString("3. MEMORIE: Lista de fișiere de mai jos este REALA și ACTUALĂ. Dacă un fișier nu apare în listă, înseamnă că NU EXISTĂ.\n")
-			promptBuilder.WriteString("4. LOGICĂ: Dacă ai citit deja un fișier, informația se află în istoricul conversației. Nu îl mai citi a doua oară inutil.\n")
-			promptBuilder.WriteString("5. LIMBAJ: Dacă utilizatorul întreabă ceva despre Python dar tu vezi în listă doar fișiere Go, explică-i că proiectul este în Go.\n")
-			promptBuilder.WriteString("\n[STAREA ACTUALĂ A PROIECTULUI]\n")
-			promptBuilder.WriteString("Fișiere prezente pe disc:\n")
-			promptBuilder.WriteString("--------------------------\n")
-			promptBuilder.WriteString(getProjectFiles(cwd)) // Funcția ta care listează fișierele
-			promptBuilder.WriteString("--------------------------\n")
-			promptBuilder.WriteString("\nIMPORTANT: aceste fișiere există deja. Nu le recrea.\n")
+		plan, err := generateExecutionPlan(plannerModel, userInput, projectTree)
+		if err != nil {
+			fmt.Printf("❌ Nu am putut genera planul: %v\n", err)
+			continue
+		}
 
-			promptBuilder.WriteString("\nCONȚINUT FIȘIERE INDEXATE:\n")
-			promptBuilder.WriteString(contextBuilder.String())
+		if len(plan.Steps) == 0 {
+			fmt.Println("⚠️ Planul generat este gol. Probabil cerința a fost neclară.")
+			continue
+		}
 
-			mesajePentruOllama := make([]ChatMessage, len(conversationHistory))
-			copy(mesajePentruOllama, conversationHistory)
-
-			lastUserIdx := -1
-			for i := len(mesajePentruOllama) - 1; i >= 0; i-- {
-				if mesajePentruOllama[i].Role == "user" {
-					lastUserIdx = i
-					break
-				}
+		fmt.Println("\n📋 PLAN DE EXECUȚIE DETECTAT:")
+		for i, step := range plan.Steps {
+			// Sărim peste pașii care nu au instrucțiuni valide (failsafe pentru halucinațiile Llama)
+			if strings.TrimSpace(step.Instructions) == "" {
+				continue
 			}
-			if lastUserIdx != -1 {
-				originalContent := mesajePentruOllama[lastUserIdx].Content
-				mesajePentruOllama[lastUserIdx].Content = promptBuilder.String() + "CERINȚA CURENTĂ/REZULTAT:\n" + originalContent
+			fmt.Printf("  Pas %d: [%s] -> %s\n", i+1, step.Action, step.Instructions)
+		}
+		fmt.Println("----------------------------------------------------")
+
+		// BACKEND-UL preia controlul. LLAMA NU MAI INTERVINE.
+		eroareDetectata := false // Flag pentru a ști cum mapăm istoricul
+
+		for i, step := range plan.Steps {
+			if strings.TrimSpace(step.Instructions) == "" {
+				continue // Ignorăm și la execuție
+			}
+			fmt.Printf("\n🚀 Execut Pasul %d: %s\n", i+1, step.Action)
+
+			var toolResult string
+			args := make(map[string]interface{})
+
+			switch step.Action {
+			case "create_directory": // <--- Adăugat
+				args["dirPath"] = step.FilePath
+				toolResult = handleToolCall("toolCreateDirectory", args, coderModel, contextBuilder.String())
+			case "create_file":
+				args["filePath"] = step.FilePath
+				args["instructions"] = step.Instructions
+				toolResult = handleToolCall("toolCreateFile", args, coderModel, contextBuilder.String())
+
+			case "edit_file":
+				args["filePath"] = step.FilePath
+				args["instructions"] = step.Instructions
+				toolResult = handleToolCall("toolEditFile", args, coderModel, contextBuilder.String())
+
+			case "execute_command":
+				args["command"] = step.Instructions
+				toolResult = handleToolCall("toolExecuteCommand", args, coderModel, contextBuilder.String())
+
+			default:
+				toolResult = fmt.Sprintf("Acțiune necunoscută: %s", step.Action)
 			}
 
-			fmt.Printf("\n[Sistem] Aștept decizia de la %s...\n", plannerModel)
-			responseMsg, err := CallOllamaChat(plannerModel, mesajePentruOllama, autoDevTools)
-			if err != nil {
-				fmt.Printf("\n[Eroare]: %v\n", err)
-				conversationHistory = conversationHistory[:len(conversationHistory)-1]
+			fmt.Printf("[Rezultat Pas %d]:\n%s\n", i+1, toolResult)
+
+			// Verificăm dacă utilizatorul a anulat intenționat
+			if strings.Contains(toolResult, "OPRIT") || strings.Contains(toolResult, "respins") {
+				fmt.Println("\n⚠️ Execuția planului a fost întreruptă de utilizator.")
+				eroareDetectata = true
 				break
 			}
 
-			conversationHistory = append(conversationHistory, responseMsg)
-			toolExecuted := false
+			// Verificăm dacă a apărut o eroare de execuție/sintaxă
+			if strings.Contains(toolResult, "Eroare") || strings.Contains(toolResult, "error") || strings.Contains(toolResult, "Exception") {
+				fmt.Printf("\n⚠️ Eroare detectată la Pasul %d! Pregătesc auto-repararea...\n", i+1)
 
-			// 1. Verificare ToolCalls native
-			if len(responseMsg.ToolCalls) > 0 {
-				for _, tc := range responseMsg.ToolCalls {
-					toolResult := handleToolCall(tc.Function.Name, tc.Function.Arguments, coderModel, contextBuilder.String())
-					fmt.Printf("[Rezultat Tool]:\n%s\n", toolResult)
-					conversationHistory = append(conversationHistory, ChatMessage{Role: "tool", Content: toolResult})
-					toolExecuted = true
-				}
-			} else {
-				// 2. Fallback JSON
-				jsonStr, found := extractJSONFromText(responseMsg.Content)
-				if found {
-					var inlineTool InlineToolCall
-					if err := json.Unmarshal([]byte(jsonStr), &inlineTool); err == nil && inlineTool.Name != "" {
-						toolResult := handleToolCall(inlineTool.Name, inlineTool.Arguments, coderModel, contextBuilder.String())
-						fmt.Printf("[Rezultat Tool]:\n%s\n", toolResult)
-						conversationHistory = append(conversationHistory, ChatMessage{
-							Role:    "user",
-							Content: fmt.Sprintf("Am executat %s. Rezultat:\n%s\nAnalizează și continuă/confirmă.", inlineTool.Name, toolResult),
-						})
-						toolExecuted = true
-					}
-				}
-			}
+				// Formulăm mesajul automat pentru Llama
+				autoPrompt = fmt.Sprintf(`La executarea planului a apărut următoarea eroare în terminal:
+%s
 
-			if !toolExecuted {
-				fmt.Println("\n🗣️ [Răspuns Llama / Interfață]:")
-				fmt.Println("----------------------------------------------------")
-				fmt.Println(responseMsg.Content)
-				fmt.Println("----------------------------------------------------")
+Te rog analizează cu atenție eroarea și codul actual, identifică problema și creează un plan NOU cu pași de tip "edit_file" pentru a repara eroarea. 
+Apoi, adaugă un pas final de tip "execute_command" pentru a rula din nou și a verifica dacă s-a rezolvat.`, toolResult)
+
+				eroareDetectata = true
 				break
 			}
+		}
+
+		if !eroareDetectata {
+			fmt.Println("\n✅ Plan finalizat cu succes.")
+
+			// Adăugăm în memorie doar dacă s-a terminat cu succes
+			conversationHistory = append(conversationHistory, ChatMessage{Role: "user", Content: userInput})
+			conversationHistory = append(conversationHistory, ChatMessage{
+				Role:    "assistant",
+				Content: "[Sistem: Plan executat. Modificările au fost salvate cu succes.]",
+			})
 		}
 	}
 }
