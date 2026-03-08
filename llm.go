@@ -177,3 +177,44 @@ func CallOllamaGenerate(modelName string, prompt string) (string, error) {
 
 	return genResp.Response, nil
 }
+
+// --- LLM ROUTER (Gateway către diverse backend-uri) ---
+
+func CallChat(cfg *Config, messages []ChatMessage, tools []Tool) (ChatMessage, error) {
+	switch cfg.Provider {
+	case "ollama":
+		// Folosește funcția ta existentă
+		return CallOllamaChat(cfg.PlannerModel, messages, tools)
+
+	case "openai":
+		// Aici vei implementa CallOpenAIChat în viitor
+		return ChatMessage{}, fmt.Errorf("OpenAI nu este încă implementat")
+
+	case "gemini":
+		// Aici vei implementa CallGeminiChat în viitor
+		return ChatMessage{}, fmt.Errorf("Gemini nu este încă implementat")
+
+	case "vllm":
+		// vLLM folosește de obicei formatul compatibil cu OpenAI
+		return ChatMessage{}, fmt.Errorf("vLLM nu este încă implementat")
+
+	default:
+		return ChatMessage{}, fmt.Errorf("provider necunoscut: %s", cfg.Provider)
+	}
+}
+
+func CallGenerate(cfg *Config, prompt string) (string, error) {
+	switch cfg.Provider {
+	case "ollama":
+		// Folosește funcția ta existentă
+		return CallOllamaGenerate(cfg.CoderModel, prompt)
+
+	case "openai":
+		// Aici vei implementa CallOpenAIGenerate
+		return "", fmt.Errorf("OpenAI nu este încă implementat")
+
+	// Adaugi restul pe parcurs...
+	default:
+		return "", fmt.Errorf("provider necunoscut: %s", cfg.Provider)
+	}
+}

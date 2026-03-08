@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"github.com/ledongthuc/pdf"
@@ -36,6 +37,34 @@ EXEMPLE:
 - "verifică serverul" -> CODE
 - "pune-l la treabă" -> CODE
 `
+const configFileName = "autodev_config.json"
+
+type Config struct {
+	Provider     string `json:"provider"`      // "ollama", "vllm", "openai", "gemini"
+	PlannerModel string `json:"planner_model"` // ex: "llama3.1:latest" sau "gpt-4o"
+	CoderModel   string `json:"coder_model"`   // ex: "qwen2.5-coder:latest" sau "gpt-4o-mini"
+	APIKey       string `json:"api_key"`       // Pentru cloud
+	BaseURL      string `json:"base_url"`      // Pentru Ollama sau vLLM
+}
+
+// Încarcă setările sau returnează un default sigur
+func loadConfig() *Config {
+	cfg := &Config{
+		Provider: "ollama",
+		BaseURL:  "http://localhost:11434/api",
+	}
+
+	data, err := os.ReadFile(configFileName)
+	if err == nil {
+		json.Unmarshal(data, cfg)
+	}
+	return cfg
+}
+
+func saveConfig(cfg *Config) {
+	data, _ := json.MarshalIndent(cfg, "", "  ")
+	os.WriteFile(configFileName, data, 0644)
+}
 
 type FileCache map[string]string
 
@@ -50,7 +79,140 @@ type ExecutionPlan struct {
 }
 
 // --- Funcții de Caching și Citire ---
+func showSettingsMenu(cfg *Config) {
+	scanner := bufio.NewScanner(os.Stdin)
+	for {
+		fmt.Println("\n=== ⚙️  MENIU SETĂRI AUTODEV ===")
+		fmt.Printf("1. Backend curent: %s\n", cfg.Provider)
+		fmt.Printf("2. Model Planificator (Master): %s\n", cfg.PlannerModel)
+		fmt.Printf("3. Model Coder (Worker): %s\n", cfg.CoderModel)
+		fmt.Printf("4. API Key (Cloud): %s\n", func() string {
+			if cfg.APIKey != "" {
+				return "*** SETAT ***"
+			}
+			return "NESETAT"
+		}())
+		fmt.Println("5. Ieșire și Salvare")
+		fmt.Print("\nCe dorești să modifici? (1-5): ")
 
+		if !scanner.Scan() {
+			return
+		}
+		choice := strings.TrimSpace(scanner.Text())
+
+		switch choice {
+		case "1":
+			providers := []string{"ollama", "vllm", "openai", "gemini"}
+			fmt.Println("\n🌐 Alege noul backend:")
+			for i, p := range providers {
+				fmt.Printf("  %d. %s\n", i+1, p)
+			}
+			fmt.Print("\n👉 Introdu numărul (1-4) sau scrie numele: ")
+
+			if scanner.Scan() {
+				input := strings.TrimSpace(scanner.Text())
+				if input == "" {
+					continue
+				}
+
+				// Verificăm dacă a introdus o cifră validă
+				if idx, err := strconv.Atoi(input); err == nil && idx > 0 && idx <= len(providers) {
+					cfg.Provider = providers[idx-1]
+					fmt.Printf("✅ Backend setat la: %s\n", cfg.Provider)
+				} else {
+					// Verificăm dacă a scris direct numele provider-ului în loc de cifră
+					inputLower := strings.ToLower(input)
+					valid := false
+					for _, p := range providers {
+						if inputLower == p {
+							cfg.Provider = p
+							valid = true
+							fmt.Printf("✅ Backend setat manual la: %s\n", cfg.Provider)
+							break
+						}
+					}
+					if !valid {
+						fmt.Println("❌ Opțiune invalidă. Backend-ul a rămas neschimbat.")
+					}
+				}
+			}
+		case "2", "3":
+			// Determinăm ce variabilă modificăm în funcție de alegere
+			var target *string
+			var roleName string
+			if choice == "2" {
+				target = &cfg.PlannerModel
+				roleName = "Planificator (Master)"
+			} else {
+				target = &cfg.CoderModel
+				roleName = "Coder (Worker)"
+			}
+
+			if cfg.Provider == "ollama" {
+				// Dacă e Ollama, aducem modelele local
+				modele, err := GetLocalModels()
+				if err == nil && len(modele) > 0 {
+					fmt.Printf("\n📦 Modele Ollama instalate pentru %s:\n", roleName)
+					for i, m := range modele {
+						fmt.Printf("  %d. %s\n", i+1, m)
+					}
+					fmt.Print("\n👉 Introdu numărul modelului (sau scrie manual numele): ")
+
+					if scanner.Scan() {
+						input := strings.TrimSpace(scanner.Text())
+						if input == "" {
+							continue
+						}
+
+						// Încercăm să convertim input-ul într-un număr (index)
+						if idx, err := strconv.Atoi(input); err == nil && idx > 0 && idx <= len(modele) {
+							*target = modele[idx-1] // Setăm modelul ales prin număr
+							fmt.Printf("✅ Model %s setat la: %s\n", roleName, *target)
+						} else {
+							// Dacă nu e număr, presupunem că a scris manual numele modelului
+							*target = input
+							fmt.Printf("✅ Model %s setat manual la: %s\n", roleName, *target)
+						}
+					}
+				} else {
+					// Fallback dacă nu poate citi modelele
+					fmt.Printf("Nu am putut citi modelele din Ollama. Introdu numele manual pentru %s: ", roleName)
+					if scanner.Scan() {
+						input := strings.TrimSpace(scanner.Text())
+						if input != "" {
+							*target = input
+						}
+					}
+				}
+			} else {
+				// Dacă e cloud (OpenAI, Gemini), cerem pur și simplu text (ex: gpt-4o)
+				fmt.Printf("Nume model %s (ex: gpt-4o, gemini-1.5-pro): ", roleName)
+				if scanner.Scan() {
+					input := strings.TrimSpace(scanner.Text())
+					if input != "" {
+						*target = input
+					}
+				}
+			}
+
+		case "4":
+			fmt.Print("Introdu API Key (sau lasă gol pentru a anula): ")
+			if scanner.Scan() {
+				input := strings.TrimSpace(scanner.Text())
+				if input != "" {
+					cfg.APIKey = input
+					fmt.Println("✅ API Key actualizat!")
+				}
+			}
+		case "5":
+			saveConfig(cfg)
+			fmt.Println("💾 Setări salvate cu succes!")
+			return
+		default:
+			fmt.Println("❌ Opțiune invalidă. Te rog alege o cifră de la 1 la 5.")
+		}
+	}
+}
 func computeHash(content []byte) string {
 	hash := md5.Sum(content)
 	return hex.EncodeToString(hash[:])
@@ -639,50 +801,55 @@ func main() {
 		return
 	}
 
-	// --- DETECTARE MODELE PENTRU ARHITECTURA MASTER-WORKER ---
-	modele, err := GetLocalModels()
-	if err != nil || len(modele) == 0 {
-		fmt.Println("⚠️ Eroare Ollama sau niciun model instalat.")
-		return
-	}
+	// --- 1. ÎNCĂRCARE SETĂRI ---
+	cfg := loadConfig()
 
-	var plannerModel, coderModel string
-	for _, m := range modele {
-		if strings.Contains(strings.ToLower(m), "llama") && plannerModel == "" {
-			plannerModel = m
+	// Dacă suntem pe Ollama și nu avem modele setate, încercăm să auto-detectăm
+	if cfg.Provider == "ollama" && (cfg.PlannerModel == "" || cfg.CoderModel == "") {
+		modele, err := GetLocalModels()
+		if err == nil && len(modele) > 0 {
+			for _, m := range modele {
+				if strings.Contains(strings.ToLower(m), "llama") && cfg.PlannerModel == "" {
+					cfg.PlannerModel = m
+				}
+				if strings.Contains(strings.ToLower(m), "qwen") && cfg.CoderModel == "" {
+					cfg.CoderModel = m
+				}
+			}
+			if cfg.PlannerModel == "" {
+				cfg.PlannerModel = modele[0]
+			}
+			if cfg.CoderModel == "" {
+				cfg.CoderModel = modele[0]
+			}
+			saveConfig(cfg) // Salvăm ce am găsit
 		}
-		if strings.Contains(strings.ToLower(m), "qwen") && coderModel == "" {
-			coderModel = m
-		}
-	}
-	// Fallback dacă nu găsește llama/qwen explicit
-	if plannerModel == "" {
-		plannerModel = modele[0]
-	}
-	if coderModel == "" {
-		coderModel = modele[0]
 	}
 
 	fmt.Println("\n====================================================")
 	fmt.Println("🌟 AUTODEV: ARHITECTURĂ MASTER-WORKER ACTIVATĂ 🌟")
-	fmt.Printf("🧠 Planificator (Interfață): %s\n", plannerModel)
-	fmt.Printf("💻 Executant (Scriere Cod): %s\n", coderModel)
+	fmt.Printf("🌐 Provider: %s\n", strings.ToUpper(cfg.Provider))
+	if cfg.Provider == "ollama" {
+		fmt.Printf("🧠 Planificator: %s\n", cfg.PlannerModel)
+		fmt.Printf("💻 Executant: %s\n", cfg.CoderModel)
+	} else {
+		fmt.Printf("🧠 Model Cloud: %s\n", cfg.PlannerModel)
+	}
+	fmt.Println("Tastați '/setari' pentru a modifica backend-ul.")
 	fmt.Println("====================================================")
 
 	scanner := bufio.NewScanner(os.Stdin)
 	var conversationHistory []ChatMessage
-	var autoPrompt string // <--- Variabilă pentru Auto-Reparare
+	var autoPrompt string
 
 	for {
-		// --- 1. SCANARE PROASPĂTĂ (Mutată aici pentru a citi mereu modificările noi) ---
+		// --- 2. SCANARE PROASPĂTĂ ---
 		cache := loadCache(cwd)
 		newCache := make(FileCache)
-		var contextBuilder strings.Builder
-		// --- 1. SCANARE PROASPĂTĂ (Construim doar ARBORELE de fișiere) ---
-		cache = loadCache(cwd)
-		newCache = make(FileCache)
 
 		var treeBuilder strings.Builder
+		var contextBuilder strings.Builder // Păstrăm și conținutul pentru Coder (dacă e nevoie la creare)
+
 		treeBuilder.WriteString("📁 Rădăcină Proiect:\n")
 
 		filepath.Walk(cwd, func(path string, info os.FileInfo, err error) error {
@@ -690,7 +857,6 @@ func main() {
 				return nil
 			}
 
-			// IGNORĂM complet folderele mari/inutile pentru a nu pierde timpul
 			if info.IsDir() {
 				n := info.Name()
 				if n == "node_modules" || n == ".git" || n == ".venv" || n == "venv" || n == "__pycache__" {
@@ -699,11 +865,9 @@ func main() {
 				return nil
 			}
 
-			// Dacă este fișier valid
 			relPath, _ := filepath.Rel(cwd, path)
 			if relPath != cacheFileName && !strings.HasPrefix(info.Name(), "autodev") {
 
-				// Păstrăm logica ta de cache pentru a afișa ce s-a modificat pe disc
 				textContent, _ := getContent(path)
 				currentHash := computeHash([]byte(textContent))
 				newCache[relPath] = currentHash
@@ -713,22 +877,21 @@ func main() {
 					fmt.Printf("[Detectat/Modificat] 📄 %s\n", relPath)
 				}
 
-				// ADĂUGĂM DOAR CALEA ÎN ARBORE (Fără conținut!)
 				treeBuilder.WriteString(fmt.Sprintf("  - %s\n", relPath))
+				contextBuilder.WriteString(fmt.Sprintf("\n--- Fișier: %s ---\n%s\n", relPath, textContent))
 			}
 			return nil
 		})
 		saveCache(cwd, newCache)
 
-		// Salvăm structura pentru a o trimite Planificatorului
 		projectTree := treeBuilder.String()
 
-		// --- 2. CITIRE INPUT SAU AUTO-PROMPT ---
+		// --- 3. CITIRE INPUT SAU AUTO-PROMPT ---
 		var userInput string
 		if autoPrompt != "" {
 			userInput = autoPrompt
-			fmt.Println("\n🔄 [Auto-Recuperare] Trimit automat eroarea către Planificator...")
-			autoPrompt = "" // Resetăm pentru a nu bucla la infinit
+			fmt.Println("\n🔄 [Auto-Recuperare] Trimit automat eroarea către AI...")
+			autoPrompt = ""
 		} else {
 			fmt.Print("\n> Cerința ta: ")
 			if !scanner.Scan() {
@@ -740,24 +903,28 @@ func main() {
 		if strings.ToLower(userInput) == "exit" {
 			break
 		}
+		if strings.ToLower(userInput) == "/setari" {
+			showSettingsMenu(cfg)
+			continue
+		}
 		if strings.TrimSpace(userInput) == "" {
 			continue
 		}
 
-		// 3. Clasificăm intenția
-		intent := classifyIntent(userInput, plannerModel)
+		// --- 4. CLASIFICARE INTENȚIE ---
+		// Notă: am trimis cfg.PlannerModel aici pentru Ollama, dar poți folosi funcția nouă CallChat mai târziu
+		intent := classifyIntent(userInput, cfg.PlannerModel)
 		fmt.Printf("[Sistem] Intenție detectată: %s\n", intent)
 
 		if intent == "CHAT" {
-			// --- LOGICA DE CHAT SIMPLU ---
 			mesajeChat := append(conversationHistory, ChatMessage{Role: "user", Content: userInput})
-
 			mesajeChat = append([]ChatMessage{{
 				Role:    "system",
-				Content: "Ești un asistent util. Răspunde direct la întrebarea utilizatorului. Nu menționa fișierele din proiect dacă nu ești întrebat de ele.",
+				Content: "Ești un asistent util. Răspunde direct la întrebarea utilizatorului.",
 			}}, mesajeChat...)
 
-			responseMsg, err := CallOllamaChat(plannerModel, mesajeChat, nil)
+			// În viitor, aici va fi CallChat(cfg, mesajeChat, nil)
+			responseMsg, err := CallOllamaChat(cfg.PlannerModel, mesajeChat, nil)
 			if err == nil {
 				fmt.Println("\n🗣️ [Asistent]:", responseMsg.Content)
 				conversationHistory = append(conversationHistory, ChatMessage{Role: "user", Content: userInput}, responseMsg)
@@ -765,98 +932,108 @@ func main() {
 			continue
 		}
 
-		// --- LOGICA DE CODING (Intent == "CODE") ---
-		fmt.Printf("\n[Planificator] 🧠 `%s` analizează cerința și creează planul de acțiune...\n", plannerModel)
+		// --- 5. LOGICA DE CODING ---
+		if cfg.Provider == "ollama" {
+			// =================================================================
+			// RAMURA PENTRU MODELE LOCALE (Arhitectura Plan-and-Execute)
+			// =================================================================
+			fmt.Printf("\n[Planificator] 🧠 `%s` analizează cerința și creează planul de acțiune...\n", cfg.PlannerModel)
 
-		plan, err := generateExecutionPlan(plannerModel, userInput, projectTree)
-		if err != nil {
-			fmt.Printf("❌ Nu am putut genera planul: %v\n", err)
-			continue
-		}
-
-		if len(plan.Steps) == 0 {
-			fmt.Println("⚠️ Planul generat este gol. Probabil cerința a fost neclară.")
-			continue
-		}
-
-		fmt.Println("\n📋 PLAN DE EXECUȚIE DETECTAT:")
-		for i, step := range plan.Steps {
-			// Sărim peste pașii care nu au instrucțiuni valide (failsafe pentru halucinațiile Llama)
-			if strings.TrimSpace(step.Instructions) == "" {
+			plan, err := generateExecutionPlan(cfg.PlannerModel, userInput, projectTree)
+			if err != nil {
+				fmt.Printf("❌ Nu am putut genera planul: %v\n", err)
 				continue
 			}
-			fmt.Printf("  Pas %d: [%s] -> %s\n", i+1, step.Action, step.Instructions)
-		}
-		fmt.Println("----------------------------------------------------")
 
-		// BACKEND-UL preia controlul. LLAMA NU MAI INTERVINE.
-		eroareDetectata := false // Flag pentru a ști cum mapăm istoricul
-
-		for i, step := range plan.Steps {
-			if strings.TrimSpace(step.Instructions) == "" {
-				continue // Ignorăm și la execuție
-			}
-			fmt.Printf("\n🚀 Execut Pasul %d: %s\n", i+1, step.Action)
-
-			var toolResult string
-			args := make(map[string]interface{})
-
-			switch step.Action {
-			case "create_directory": // <--- Adăugat
-				args["dirPath"] = step.FilePath
-				toolResult = handleToolCall("toolCreateDirectory", args, coderModel, contextBuilder.String())
-			case "create_file":
-				args["filePath"] = step.FilePath
-				args["instructions"] = step.Instructions
-				toolResult = handleToolCall("toolCreateFile", args, coderModel, contextBuilder.String())
-
-			case "edit_file":
-				args["filePath"] = step.FilePath
-				args["instructions"] = step.Instructions
-				toolResult = handleToolCall("toolEditFile", args, coderModel, contextBuilder.String())
-
-			case "execute_command":
-				args["command"] = step.Instructions
-				toolResult = handleToolCall("toolExecuteCommand", args, coderModel, contextBuilder.String())
-
-			default:
-				toolResult = fmt.Sprintf("Acțiune necunoscută: %s", step.Action)
+			if len(plan.Steps) == 0 {
+				fmt.Println("⚠️ Planul generat este gol. Probabil cerința a fost neclară.")
+				continue
 			}
 
-			fmt.Printf("[Rezultat Pas %d]:\n%s\n", i+1, toolResult)
-
-			// Verificăm dacă utilizatorul a anulat intenționat
-			if strings.Contains(toolResult, "OPRIT") || strings.Contains(toolResult, "respins") {
-				fmt.Println("\n⚠️ Execuția planului a fost întreruptă de utilizator.")
-				eroareDetectata = true
-				break
+			fmt.Println("\n📋 PLAN DE EXECUȚIE DETECTAT:")
+			for i, step := range plan.Steps {
+				if strings.TrimSpace(step.Instructions) == "" {
+					continue
+				}
+				fmt.Printf("  Pas %d: [%s] -> %s\n", i+1, step.Action, step.Instructions)
 			}
+			fmt.Println("----------------------------------------------------")
 
-			// Verificăm dacă a apărut o eroare de execuție/sintaxă
-			if strings.Contains(toolResult, "Eroare") || strings.Contains(toolResult, "error") || strings.Contains(toolResult, "Exception") {
-				fmt.Printf("\n⚠️ Eroare detectată la Pasul %d! Pregătesc auto-repararea...\n", i+1)
+			eroareDetectata := false
 
-				// Formulăm mesajul automat pentru Llama
-				autoPrompt = fmt.Sprintf(`La executarea planului a apărut următoarea eroare în terminal:
+			for i, step := range plan.Steps {
+				if strings.TrimSpace(step.Instructions) == "" {
+					continue
+				}
+				fmt.Printf("\n🚀 Execut Pasul %d: %s\n", i+1, step.Action)
+
+				var toolResult string
+				args := make(map[string]interface{})
+
+				switch step.Action {
+				case "create_directory":
+					args["dirPath"] = step.FilePath
+					toolResult = handleToolCall("toolCreateDirectory", args, cfg.CoderModel, contextBuilder.String())
+				case "create_file":
+					args["filePath"] = step.FilePath
+					args["instructions"] = step.Instructions
+					toolResult = handleToolCall("toolCreateFile", args, cfg.CoderModel, contextBuilder.String())
+				case "edit_file":
+					args["filePath"] = step.FilePath
+					args["instructions"] = step.Instructions
+					toolResult = handleToolCall("toolEditFile", args, cfg.CoderModel, contextBuilder.String())
+				case "execute_command":
+					args["command"] = step.Instructions
+					toolResult = handleToolCall("toolExecuteCommand", args, cfg.CoderModel, contextBuilder.String())
+				default:
+					toolResult = fmt.Sprintf("Acțiune necunoscută: %s", step.Action)
+				}
+
+				fmt.Printf("[Rezultat Pas %d]:\n%s\n", i+1, toolResult)
+
+				if strings.Contains(toolResult, "OPRIT") || strings.Contains(toolResult, "respins") {
+					fmt.Println("\n⚠️ Execuția planului a fost întreruptă de utilizator.")
+					eroareDetectata = true
+					break
+				}
+
+				if strings.Contains(toolResult, "Eroare") || strings.Contains(toolResult, "error") || strings.Contains(toolResult, "Exception") {
+					fmt.Printf("\n⚠️ Eroare detectată la Pasul %d! Pregătesc auto-repararea...\n", i+1)
+					autoPrompt = fmt.Sprintf(`La executarea planului a apărut următoarea eroare în terminal:
 %s
 
-Te rog analizează cu atenție eroarea și codul actual, identifică problema și creează un plan NOU cu pași de tip "edit_file" pentru a repara eroarea. 
-Apoi, adaugă un pas final de tip "execute_command" pentru a rula din nou și a verifica dacă s-a rezolvat.`, toolResult)
-
-				eroareDetectata = true
-				break
+Te rog analizează eroarea și codul actual, identifică problema și creează un plan NOU cu pași de tip "edit_file" pentru a o repara, urmat de un "execute_command" pentru testare.`, toolResult)
+					eroareDetectata = true
+					break
+				}
 			}
-		}
 
-		if !eroareDetectata {
-			fmt.Println("\n✅ Plan finalizat cu succes.")
+			if !eroareDetectata {
+				fmt.Println("\n✅ Plan finalizat cu succes.")
+				conversationHistory = append(conversationHistory, ChatMessage{Role: "user", Content: userInput})
+				conversationHistory = append(conversationHistory, ChatMessage{
+					Role:    "assistant",
+					Content: "[Sistem: Plan executat cu succes folosind modele locale.]",
+				})
+			}
 
-			// Adăugăm în memorie doar dacă s-a terminat cu succes
-			conversationHistory = append(conversationHistory, ChatMessage{Role: "user", Content: userInput})
-			conversationHistory = append(conversationHistory, ChatMessage{
-				Role:    "assistant",
-				Content: "[Sistem: Plan executat. Modificările au fost salvate cu succes.]",
-			})
+		} else {
+			// =================================================================
+			// RAMURA PENTRU MODELE CLOUD (OpenAI / Gemini)
+			// =================================================================
+			fmt.Printf("\n☁️ [Cloud Agent] Apelez %s pentru a rezolva cerința direct...\n", strings.ToUpper(cfg.Provider))
+
+			// Aici va veni logica în care Cloud-ul rezolvă problema nativ,
+			// fără planificare JSON, folosind direct `CallChat(cfg, ...)` cu Tool-uri atașate.
+
+			fmt.Println("⚠️ Logica de execuție pentru Cloud urmează să fie implementată.")
+
+			// Decomentează și folosește după ce integrezi CallChat-ul cloud:
+			/*
+				conversationHistory = append(conversationHistory, ChatMessage{Role: "user", Content: userInput})
+				responseMsg, err := CallChat(cfg, conversationHistory, autoDevTools)
+				// ... execuție nativă tool-uri ...
+			*/
 		}
 	}
 }
