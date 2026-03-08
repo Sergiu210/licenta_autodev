@@ -585,6 +585,7 @@ codul complet aici
 	case "toolEditFile":
 		path, _ := args["filePath"].(string)
 		instructions, _ := args["instructions"].(string)
+		referenceContext, _ := args["referenceContext"].(string)
 		if isFileProtected(path) {
 			return "Eroare: Acces interzis. Nu poți modifica fișiere de sistem sau biblioteci externe!"
 		}
@@ -594,29 +595,41 @@ codul complet aici
 			return feedback
 		}
 
-		currentContent, err := os.ReadFile(path)
+		currentContentBytes, err := os.ReadFile(path)
 		if err != nil {
 			return fmt.Sprintf("Eroare citire: %v", err)
 		}
+		currentContent := string(currentContentBytes)
 
 		fmt.Printf("\n[Sub-Agent] 🧠 Apelez %s pentru a repara/modifica fișierul...\n", coderModel)
-
-		// Prompt OPTIMIZAT: Fără 'projectContext', doar conținutul strict al fișierului!
-		prompt := fmt.Sprintf(`Ești un expert programator.
-
-Trebuie să modifici următorul fișier conform cerinței.
-
-================= FIȘIER CURENT (%s) =================
+		refBlock := ""
+		if referenceContext != "" {
+			refBlock = fmt.Sprintf(`
+================= CONTEXT REFERINȚĂ (NU MODIFICA) =================
+Aceste fișiere au fost deja modificate la pașii anteriori. 
+Privește-le DOAR pentru a ști ce clase, ID-uri sau funcții să folosești.
+ESTE INTERZIS SĂ RETURNEZI COD PENTRU ACESTE FIȘIERE!
 %s
-======================================================
+===================================================================
+`, referenceContext)
+		}
+		// 1. PROMPT OPTIMIZAT ANTI-LENE
+		prompt := fmt.Sprintf(`Ești un expert programator.
+Trebuie să modifici următorul fișier conform cerinței.
+%s
+================= FIȘIER ȚINTĂ DE MODIFICAT (%s) =================
+%s
+==================================================================
 
 CERINȚĂ MODIFICARE:
 %s
 
-REGULI:
-1. Returnează DOAR codul complet modificat pentru acest fișier într-un bloc markdown (fără explicații suplimentare).
-2. Păstrează restul codului din fișier intact, modifică doar ce se cere.
-`, path, string(currentContent), instructions)
+REGULI ABSOLUTE:
+1. Returnează codul COMPLET și EXACT DOAR pentru fișierul țintă (%s).
+2. ESTE STRICT INTERZIS să omiți cod folosind "// restul codului aici".
+3. NU scrie și NU returna cod pentru fișierele din secțiunea de Referință.
+4. Răspunde doar cu codul încapsulat în blocuri markdown.
+`, refBlock, path, currentContent, instructions, path)
 
 		resp, err := CallOllamaGenerate(coderModel, prompt)
 		if err != nil {
@@ -625,10 +638,35 @@ REGULI:
 
 		cleanCode := extractCodeFromMarkdown(resp)
 
+		// 2. VALIDARE ANTI-TRUNCHIERE (SAFETY CHECK)
+		// Verificăm dacă AI-ul a lăsat comentarii de "lene"
+		lazyKeywords := []string{"// ...", "/* ... */", "// restul codului", "// rest of"}
+		for _, kw := range lazyKeywords {
+			if strings.Contains(strings.ToLower(cleanCode), kw) {
+				return "Eroare: AI-ul a trunchiat codul (a folosit comentarii în loc să scrie tot codul). Modificarea a fost anulată pentru siguranță."
+			}
+		}
+
+		// Verificăm diferența de dimensiune (dacă fișierul nou e cu 80% mai mic, e suspect)
+		if len(cleanCode) < int(float64(len(currentContent))*0.2) {
+			return "Eroare: Codul generat este suspect de mic față de original. Pentru a preveni ștergerea fișierului, acțiunea a fost blocată."
+		}
+
+		// 3. SISTEM DE BACKUP AUTOMAT
+		backupPath := path + ".bak"
+		err = os.WriteFile(backupPath, currentContentBytes, 0644)
+		if err != nil {
+			fmt.Printf("⚠️ Nu s-a putut crea backup pentru %s: %v\n", path, err)
+		} else {
+			fmt.Printf("📦 Backup creat la: %s\n", backupPath)
+		}
+
+		// 4. SCRIEREA FINALĂ
 		if err := os.WriteFile(path, []byte(cleanCode), 0644); err != nil {
 			return fmt.Sprintf("Eroare la salvarea fișierului modificat: %v", err)
 		}
-		return fmt.Sprintf("Fișierul a fost rescris cu succes de %s conform instrucțiunilor.", coderModel)
+
+		return fmt.Sprintf("Fișierul a fost rescris cu succes de %s. Un backup a fost salvat ca %s.", coderModel, backupPath)
 	case "toolOpenFile":
 		path, ok := args["filePath"].(string)
 		if !ok {
@@ -676,36 +714,66 @@ func extractJSONFromText(text string) (string, bool) {
 func classifyIntent(userInput string, modelName string) string {
 	userInputLower := strings.ToLower(userInput)
 
-	// Plasa de siguranță: Cuvinte cheie care forțează modul CODE
-	actionKeywords := []string{"ruleaza", "rulează", "test", "executa", "porneste", "pornește", "run", "go run", "testeaza"}
+	// 1. PLASA DE SIGURANȚĂ EXTINSĂ (cuvinte cheie care indică clar o acțiune)
+	actionKeywords := []string{
+		"ruleaza", "rulează", "test", "executa", "porneste", "pornește", "run", "go run", "testeaza",
+		"creeaza", "creează", "modifica", "modifică", "adauga", "adaugă", "repara", "repară",
+		"scrie", "implementeaza", "implementează", "sterge", "șterge", "bug", "eroare",
+		"schimba", "schimbă", "refactorizeaza", "actualizeaza", "fa un", "fă un",
+	}
+
 	for _, kw := range actionKeywords {
+		// Folosim o verificare simplă, dar eficientă
 		if strings.Contains(userInputLower, kw) {
 			return "CODE"
 		}
 	}
+
+	// 2. PROMPT STRICT DE TIP "FEW-SHOT" (cu exemple incluse)
+	systemPrompt := `Ești un router de intenții precis. Analizează cerința utilizatorului și răspunde DOAR cu 'CODE' sau 'CHAT'.
+
+REGULI:
+- Răspunde 'CODE' dacă utilizatorul cere o acțiune tehnică: să creeze, să modifice, să scrie cod, să șteargă, să repare, să ruleze sau să testeze.
+- Răspunde 'CHAT' DOAR dacă este o întrebare teoretică, o cerere de explicație generală, sau o discuție liberă.
+
+EXEMPLE:
+Utilizator: "ce este o interfață în Go?" -> CHAT
+Utilizator: "adaugă o funcție de login în main.go" -> CODE
+Utilizator: "cum funcționează HTTP?" -> CHAT
+Utilizator: "am o eroare la linia 20, rezolv-o" -> CODE
+Utilizator: "creează un fișier nou index.html" -> CODE
+Utilizator: "ce mai faci?" -> CHAT
+`
+
 	reqBody := ChatRequest{
 		Model: modelName,
 		Messages: []ChatMessage{
-			{
-				Role:    "system",
-				Content: "Ești un asistent care clasifică intenția utilizatorului. Răspunde DOAR cu cuvântul 'CHAT' dacă utilizatorul pune întrebări teoretice, de cultură generală sau vrea o discuție simplă. Răspunde DOAR cu 'CODE' dacă utilizatorul cere crearea de fișiere, modificarea codului, rularea proiectului sau repararea unor erori.",
-			},
+			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: userInput},
 		},
 		Stream: false,
+		// 3. SCĂDEREA TEMPERATURII pentru a evita răspunsuri neașteptate
+		Options: map[string]interface{}{
+			"temperature": 0.1,
+		},
 	}
 
 	jsonData, _ := json.Marshal(reqBody)
 	resp, err := http.Post(ollamaBaseURL+"/chat", "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
-		return "CHAT" // Fallback la chat în caz de eroare
+		return "CHAT" // Fallback la chat în caz de eroare de rețea
 	}
 	defer resp.Body.Close()
 
 	var chatResp ChatResponse
-	json.NewDecoder(resp.Body).Decode(&chatResp)
+	if err := json.NewDecoder(resp.Body).Decode(&chatResp); err != nil {
+		return "CHAT"
+	}
 
+	// Extragem și curățăm răspunsul
 	intent := strings.TrimSpace(strings.ToUpper(chatResp.Message.Content))
+
+	// Verificăm strict rezultatul pentru a evita halucinațiile
 	if strings.Contains(intent, "CODE") {
 		return "CODE"
 	}
@@ -724,17 +792,18 @@ CERINȚA UTILIZATORULUI: "%s"
 
 REGULI ABSOLUTE DE PLANIFICARE:
 1. ALEGE FIȘIERUL: Dacă utilizatorul cere o modificare, uită-te în "ARBORELE FIȘIERELOR EXISTENTE". Dacă fișierul apare acolo, folosește OBLIGATORIU acțiunea "edit_file" cu calea sa exactă.
-2. CUM FUNCȚIONEAZĂ "edit_file": Când tu dai comanda "edit_file", sistemul nostru din spate va citi automat conținutul fișierului de pe disc și îl va trimite Coder-ului. Tu trebuie doar să îi scrii instrucțiunile logice (ex: "Modifică culoarea titlului în roșu").
+2. CUM FUNCȚIONEAZĂ "edit_file": Când tu dai comanda "edit_file", sistemul nostru din spate va citi automat conținutul fișierului de pe disc și îl va trimite Coder-ului. Tu trebuie doar să îi scrii instrucțiunile logice 
 3. CREARE: Folosește "create_file" DOAR dacă fișierul nu există în arbore și a fost cerut explicit.
 4. FORMAT: Returnează DOAR un JSON valid, fără explicații.
+5. EXPLICIT: NU copia valorile din exemplul de mai jos! Trebuie să înlocuiești textele scrise cu majuscule cu valorile reale deduse din cerința utilizatorului.
 
-Exemplu format așteptat:
+Exemplu de format așteptat:
 {
   "steps": [
     {
       "action": "edit_file",
-      "file_path": "blog/post.html",
-      "instructions": "Schimbă culoarea titlului H1 în roșu folosind CSS inline sau style."
+      "file_path": "<CALEA_EXACTĂ_A_FIȘIERULUI_DIN_ARBORE>",
+      "instructions": "<EXPLICĂ AICI DETALIAT CE TREBUIE SĂ MODIFICE CODER-UL, BAZAT PE CERINȚA UTILIZATORULUI>"
     }
   ]
 }
@@ -794,6 +863,26 @@ func isFileProtected(path string) bool {
 	}
 	return false
 }
+
+const historyFileName = ".autodev_history.json"
+
+// Încarcă istoricul conversației din fișier (dacă există)
+func loadHistory() []ChatMessage {
+	var history []ChatMessage
+	data, err := os.ReadFile(historyFileName)
+	if err == nil {
+		json.Unmarshal(data, &history)
+	}
+	return history
+}
+
+// Salvează istoricul curent în fișier
+func saveHistory(history []ChatMessage) {
+	data, err := json.MarshalIndent(history, "", "  ")
+	if err == nil {
+		os.WriteFile(historyFileName, data, 0644)
+	}
+}
 func main() {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -836,10 +925,15 @@ func main() {
 		fmt.Printf("🧠 Model Cloud: %s\n", cfg.PlannerModel)
 	}
 	fmt.Println("Tastați '/setari' pentru a modifica backend-ul.")
+	fmt.Println("Tastați '/clear' pentru a sterge istoricul.")
 	fmt.Println("====================================================")
-
 	scanner := bufio.NewScanner(os.Stdin)
-	var conversationHistory []ChatMessage
+
+	// --- MODIFICAT: Încărcăm memoria salvată anterior ---
+	conversationHistory := loadHistory()
+	if len(conversationHistory) > 0 {
+		fmt.Printf("📂 [Sistem] Am încărcat %d mesaje anterioare din memorie.\n", len(conversationHistory))
+	}
 	var autoPrompt string
 
 	for {
@@ -907,6 +1001,12 @@ func main() {
 			showSettingsMenu(cfg)
 			continue
 		}
+		// --- ADĂUGAT: COMANDA DE ȘTERGERE A MEMORIEI ---
+		if strings.ToLower(userInput) == "/clear" || strings.ToLower(userInput) == "/curata" {
+			conversationHistory = nil // Golim slice-ul de mesaje
+			fmt.Println("\n🧹 [Sistem] Memoria conversației a fost ștearsă cu succes! O luăm de la capăt.")
+			continue
+		}
 		if strings.TrimSpace(userInput) == "" {
 			continue
 		}
@@ -917,17 +1017,58 @@ func main() {
 		fmt.Printf("[Sistem] Intenție detectată: %s\n", intent)
 
 		if intent == "CHAT" {
-			mesajeChat := append(conversationHistory, ChatMessage{Role: "user", Content: userInput})
-			mesajeChat = append([]ChatMessage{{
-				Role:    "system",
-				Content: "Ești un asistent util. Răspunde direct la întrebarea utilizatorului.",
-			}}, mesajeChat...)
+			// 1. Îi dăm doar ARBORELE de fișiere, ca să știe ce există, nu și conținutul
+			systemContext := fmt.Sprintf(`Ești un asistent programator.
+Ai la dispoziție următoarea structură a proiectului:
+%s
 
-			// În viitor, aici va fi CallChat(cfg, mesajeChat, nil)
-			responseMsg, err := CallOllamaChat(cfg.PlannerModel, mesajeChat, nil)
-			if err == nil {
+REGULI:
+1. Dacă utilizatorul întreabă ceva ce necesită citirea unui fișier, FOLOSEȘTE tool-ul 'toolOpenFile'.
+2. Dacă utilizatorul pune o întrebare generală, răspunde normal.
+3. Nu ghici conținutul fișierelor, citește-le!`, projectTree)
+
+			mesajeChat := append(conversationHistory, ChatMessage{Role: "user", Content: userInput})
+			mesajeChat = append([]ChatMessage{{Role: "system", Content: systemContext}}, mesajeChat...)
+
+			// 2. Apelăm modelul și îi atașăm tool-urile tale existente (autoDevTools)
+			responseMsg, err := CallOllamaChat(cfg.PlannerModel, mesajeChat, autoDevTools)
+			if err != nil {
+				fmt.Println("\n❌ [Eroare CHAT]:", err)
+				continue
+			}
+
+			// 3. Verificăm dacă Modelul a decis să folosească un Tool
+			if len(responseMsg.ToolCalls) > 0 {
+				for _, tc := range responseMsg.ToolCalls {
+					if tc.Function.Name == "toolOpenFile" {
+						filePath, _ := tc.Function.Arguments["filePath"].(string)
+						fmt.Printf("\n🔍 [Asistentul folosește un Tool: Citește '%s']...\n", filePath)
+
+						// Executăm citirea fișierului
+						toolResult := handleToolCall(tc.Function.Name, tc.Function.Arguments, "", "")
+
+						// Adăugăm în istoric cererea de tool a asistentului și răspunsul nostru (rezultatul)
+						mesajeChat = append(mesajeChat, responseMsg)
+						mesajeChat = append(mesajeChat, ChatMessage{
+							Role:    "tool",
+							Content: toolResult,
+						})
+					}
+				}
+
+				// 4. Apelăm din nou modelul ca să ne dea răspunsul final, având acum codul citit
+				finalResponse, err := CallOllamaChat(cfg.PlannerModel, mesajeChat, nil)
+				if err == nil {
+					fmt.Println("\n🗣️ [Asistent]:", finalResponse.Content)
+					// Salvăm în memorie doar întrebarea inițială și răspunsul final
+					conversationHistory = append(conversationHistory, ChatMessage{Role: "user", Content: userInput}, finalResponse)
+					saveHistory(conversationHistory)
+				}
+			} else {
+				// 5. Modelul a răspuns direct, fără să folosească un tool
 				fmt.Println("\n🗣️ [Asistent]:", responseMsg.Content)
 				conversationHistory = append(conversationHistory, ChatMessage{Role: "user", Content: userInput}, responseMsg)
+				saveHistory(conversationHistory)
 			}
 			continue
 		}
@@ -959,6 +1100,8 @@ func main() {
 			}
 			fmt.Println("----------------------------------------------------")
 
+			// var istoricPasi strings.Builder
+			fisiereModificateContext := make(map[string]string)
 			eroareDetectata := false
 
 			for i, step := range plan.Steps {
@@ -970,6 +1113,14 @@ func main() {
 				var toolResult string
 				args := make(map[string]interface{})
 
+				// --- 1. PREGĂTIM CONTEXTUL EXTRU PENTRU CODER ---
+				var contextReferinta strings.Builder
+				if len(fisiereModificateContext) > 0 {
+					for fpath, fcontent := range fisiereModificateContext {
+						contextReferinta.WriteString(fmt.Sprintf("\n[FIȘIER REFERINȚĂ (DEJA MODIFICAT): %s]\n```\n%s\n```\n", fpath, fcontent))
+					}
+				}
+				args["referenceContext"] = contextReferinta.String()
 				switch step.Action {
 				case "create_directory":
 					args["dirPath"] = step.FilePath
@@ -1006,8 +1157,14 @@ Te rog analizează eroarea și codul actual, identifică problema și creează u
 					eroareDetectata = true
 					break
 				}
+				// ADĂUGĂM ACEST PAS ÎN JURNAL PENTRU A-L ȘTI CODERUL LA PASUL URMĂTOR
+				if step.Action == "edit_file" || step.Action == "create_file" {
+					newContentBytes, err := os.ReadFile(step.FilePath)
+					if err == nil {
+						fisiereModificateContext[step.FilePath] = string(newContentBytes)
+					}
+				}
 			}
-
 			if !eroareDetectata {
 				fmt.Println("\n✅ Plan finalizat cu succes.")
 				conversationHistory = append(conversationHistory, ChatMessage{Role: "user", Content: userInput})
