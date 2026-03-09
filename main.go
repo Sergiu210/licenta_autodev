@@ -1001,9 +1001,9 @@ func main() {
 			showSettingsMenu(cfg)
 			continue
 		}
-		// --- ADĂUGAT: COMANDA DE ȘTERGERE A MEMORIEI ---
 		if strings.ToLower(userInput) == "/clear" || strings.ToLower(userInput) == "/curata" {
-			conversationHistory = nil // Golim slice-ul de mesaje
+			conversationHistory = nil
+			os.Remove(historyFileName) // Ștergem și fișierul fizic
 			fmt.Println("\n🧹 [Sistem] Memoria conversației a fost ștearsă cu succes! O luăm de la capăt.")
 			continue
 		}
@@ -1011,73 +1011,66 @@ func main() {
 			continue
 		}
 
-		// --- 4. CLASIFICARE INTENȚIE ---
-		// Notă: am trimis cfg.PlannerModel aici pentru Ollama, dar poți folosi funcția nouă CallChat mai târziu
-		intent := classifyIntent(userInput, cfg.PlannerModel)
-		fmt.Printf("[Sistem] Intenție detectată: %s\n", intent)
+		// =================================================================
+		// RAMURA PENTRU MODELE LOCALE (OLLAMA)
+		// =================================================================
+		if cfg.Provider == "ollama" {
 
-		if intent == "CHAT" {
-			// 1. Îi dăm doar ARBORELE de fișiere, ca să știe ce există, nu și conținutul
-			systemContext := fmt.Sprintf(`Ești un asistent programator.
-Ai la dispoziție următoarea structură a proiectului:
+			// DOAR pentru Ollama facem clasificarea intenției
+			intent := classifyIntent(userInput, cfg.PlannerModel)
+			fmt.Printf("[Sistem Ollama] Intenție detectată: %s\n", intent)
+
+			if intent == "CHAT" {
+				systemContext := fmt.Sprintf(`Ești un asistent programator.
+Ai la dispoziție următoarea structură a proiectului curent:
 %s
 
-REGULI:
-1. Dacă utilizatorul întreabă ceva ce necesită citirea unui fișier, FOLOSEȘTE tool-ul 'toolOpenFile'.
-2. Dacă utilizatorul pune o întrebare generală, răspunde normal.
-3. Nu ghici conținutul fișierelor, citește-le!`, projectTree)
+REGULI ABSOLUTE PENTRU TOOL-URI:
+1. Dacă întrebarea este despre codul tău existent, FOLOSEȘTE 'toolOpenFile' DOAR pentru fișierele afișate exact în lista de mai sus.
+2. ESTE STRICT INTERZIS să inventezi nume de fișiere sau căi (ex: pointer.md, test.cpp) care nu sunt în listă.
+3. Dacă utilizatorul pune o întrebare teoretică, generală sau de sintaxă (ex: "ce este un pointer?", "cum fac un for?"), RĂSPUNDE DIRECT pe bază de text, FĂRĂ să apelezi niciun tool!
+4. Nu ghici conținutul fișierelor proiectului, citește-le prin tool dacă e nevoie de ele.`, projectTree)
 
-			mesajeChat := append(conversationHistory, ChatMessage{Role: "user", Content: userInput})
-			mesajeChat = append([]ChatMessage{{Role: "system", Content: systemContext}}, mesajeChat...)
+				mesajeChat := append(conversationHistory, ChatMessage{Role: "user", Content: userInput})
+				mesajeChat = append([]ChatMessage{{Role: "system", Content: systemContext}}, mesajeChat...)
 
-			// 2. Apelăm modelul și îi atașăm tool-urile tale existente (autoDevTools)
-			responseMsg, err := CallOllamaChat(cfg.PlannerModel, mesajeChat, autoDevTools)
-			if err != nil {
-				fmt.Println("\n❌ [Eroare CHAT]:", err)
-				continue
-			}
-
-			// 3. Verificăm dacă Modelul a decis să folosească un Tool
-			if len(responseMsg.ToolCalls) > 0 {
-				for _, tc := range responseMsg.ToolCalls {
-					if tc.Function.Name == "toolOpenFile" {
-						filePath, _ := tc.Function.Arguments["filePath"].(string)
-						fmt.Printf("\n🔍 [Asistentul folosește un Tool: Citește '%s']...\n", filePath)
-
-						// Executăm citirea fișierului
-						toolResult := handleToolCall(tc.Function.Name, tc.Function.Arguments, "", "")
-
-						// Adăugăm în istoric cererea de tool a asistentului și răspunsul nostru (rezultatul)
-						mesajeChat = append(mesajeChat, responseMsg)
-						mesajeChat = append(mesajeChat, ChatMessage{
-							Role:    "tool",
-							Content: toolResult,
-						})
-					}
+				responseMsg, err := CallOllamaChat(cfg.PlannerModel, mesajeChat, autoDevTools)
+				if err != nil {
+					fmt.Println("\n❌ [Eroare CHAT]:", err)
+					continue
 				}
 
-				// 4. Apelăm din nou modelul ca să ne dea răspunsul final, având acum codul citit
-				finalResponse, err := CallOllamaChat(cfg.PlannerModel, mesajeChat, nil)
-				if err == nil {
-					fmt.Println("\n🗣️ [Asistent]:", finalResponse.Content)
-					// Salvăm în memorie doar întrebarea inițială și răspunsul final
-					conversationHistory = append(conversationHistory, ChatMessage{Role: "user", Content: userInput}, finalResponse)
+				if len(responseMsg.ToolCalls) > 0 {
+					for _, tc := range responseMsg.ToolCalls {
+						if tc.Function.Name == "toolOpenFile" {
+							filePath, _ := tc.Function.Arguments["filePath"].(string)
+							fmt.Printf("\n🔍 [Asistentul folosește un Tool: Citește '%s']...\n", filePath)
+
+							toolResult := handleToolCall(tc.Function.Name, tc.Function.Arguments, "", "")
+
+							mesajeChat = append(mesajeChat, responseMsg)
+							mesajeChat = append(mesajeChat, ChatMessage{
+								Role:    "tool",
+								Content: toolResult,
+							})
+						}
+					}
+
+					finalResponse, err := CallOllamaChat(cfg.PlannerModel, mesajeChat, nil)
+					if err == nil {
+						fmt.Println("\n🗣️ [Asistent]:", finalResponse.Content)
+						conversationHistory = append(conversationHistory, ChatMessage{Role: "user", Content: userInput}, finalResponse)
+						saveHistory(conversationHistory)
+					}
+				} else {
+					fmt.Println("\n🗣️ [Asistent]:", responseMsg.Content)
+					conversationHistory = append(conversationHistory, ChatMessage{Role: "user", Content: userInput}, responseMsg)
 					saveHistory(conversationHistory)
 				}
-			} else {
-				// 5. Modelul a răspuns direct, fără să folosească un tool
-				fmt.Println("\n🗣️ [Asistent]:", responseMsg.Content)
-				conversationHistory = append(conversationHistory, ChatMessage{Role: "user", Content: userInput}, responseMsg)
-				saveHistory(conversationHistory)
+				continue // Ne întoarcem la începutul buclei, am terminat cu CHAT-ul
 			}
-			continue
-		}
 
-		// --- 5. LOGICA DE CODING ---
-		if cfg.Provider == "ollama" {
-			// =================================================================
-			// RAMURA PENTRU MODELE LOCALE (Arhitectura Plan-and-Execute)
-			// =================================================================
+			// Dacă a ajuns aici, înseamnă că intent == "CODE"
 			fmt.Printf("\n[Planificator] 🧠 `%s` analizează cerința și creează planul de acțiune...\n", cfg.PlannerModel)
 
 			plan, err := generateExecutionPlan(cfg.PlannerModel, userInput, projectTree)
@@ -1100,7 +1093,6 @@ REGULI:
 			}
 			fmt.Println("----------------------------------------------------")
 
-			// var istoricPasi strings.Builder
 			fisiereModificateContext := make(map[string]string)
 			eroareDetectata := false
 
@@ -1113,7 +1105,6 @@ REGULI:
 				var toolResult string
 				args := make(map[string]interface{})
 
-				// --- 1. PREGĂTIM CONTEXTUL EXTRU PENTRU CODER ---
 				var contextReferinta strings.Builder
 				if len(fisiereModificateContext) > 0 {
 					for fpath, fcontent := range fisiereModificateContext {
@@ -1121,6 +1112,7 @@ REGULI:
 					}
 				}
 				args["referenceContext"] = contextReferinta.String()
+
 				switch step.Action {
 				case "create_directory":
 					args["dirPath"] = step.FilePath
@@ -1150,14 +1142,14 @@ REGULI:
 
 				if strings.Contains(toolResult, "Eroare") || strings.Contains(toolResult, "error") || strings.Contains(toolResult, "Exception") {
 					fmt.Printf("\n⚠️ Eroare detectată la Pasul %d! Pregătesc auto-repararea...\n", i+1)
-					autoPrompt = fmt.Sprintf(`La executarea planului a apărut următoarea eroare în terminal:
+					autoPrompt = fmt.Sprintf(`La executarea planului a apărut eroarea:
 %s
 
-Te rog analizează eroarea și codul actual, identifică problema și creează un plan NOU cu pași de tip "edit_file" pentru a o repara, urmat de un "execute_command" pentru testare.`, toolResult)
+Te rog analizează eroarea, identifică problema și creează un plan NOU pentru a o repara.`, toolResult)
 					eroareDetectata = true
 					break
 				}
-				// ADĂUGĂM ACEST PAS ÎN JURNAL PENTRU A-L ȘTI CODERUL LA PASUL URMĂTOR
+
 				if step.Action == "edit_file" || step.Action == "create_file" {
 					newContentBytes, err := os.ReadFile(step.FilePath)
 					if err == nil {
@@ -1165,6 +1157,7 @@ Te rog analizează eroarea și codul actual, identifică problema și creează u
 					}
 				}
 			}
+
 			if !eroareDetectata {
 				fmt.Println("\n✅ Plan finalizat cu succes.")
 				conversationHistory = append(conversationHistory, ChatMessage{Role: "user", Content: userInput})
@@ -1176,21 +1169,29 @@ Te rog analizează eroarea și codul actual, identifică problema și creează u
 
 		} else {
 			// =================================================================
-			// RAMURA PENTRU MODELE CLOUD (OpenAI / Gemini)
+			// RAMURA PENTRU MODELE CLOUD (OpenAI / Gemini / Anthropic)
 			// =================================================================
-			fmt.Printf("\n☁️ [Cloud Agent] Apelez %s pentru a rezolva cerința direct...\n", strings.ToUpper(cfg.Provider))
+			fmt.Printf("\n☁️ [Cloud Agent] Apelez %s (%s) pentru a rezolva cerința...\n", strings.ToUpper(cfg.Provider), cfg.PlannerModel)
 
-			// Aici va veni logica în care Cloud-ul rezolvă problema nativ,
-			// fără planificare JSON, folosind direct `CallChat(cfg, ...)` cu Tool-uri atașate.
+			// Pentru modelele Cloud, nu ne complicăm cu JSON planificator.
+			// Cloud-ul primește promptul cu instrucțiuni și lista de Tools (funcții)
+			// și decide singur ce să apeleze.
 
-			fmt.Println("⚠️ Logica de execuție pentru Cloud urmează să fie implementată.")
+			/* Exemplu logic de viitor pentru Cloud:
 
-			// Decomentează și folosește după ce integrezi CallChat-ul cloud:
-			/*
-				conversationHistory = append(conversationHistory, ChatMessage{Role: "user", Content: userInput})
-				responseMsg, err := CallChat(cfg, conversationHistory, autoDevTools)
-				// ... execuție nativă tool-uri ...
+			mesaje := append(conversationHistory, ChatMessage{Role: "user", Content: userInput})
+			response, _ := CallCloudModel(cfg, mesaje, autoDevTools)
+
+			// Buclă de Tools:
+			dacă response are ToolCalls:
+				execută handleToolCall pentru fiecare (creare fisier, rulare comanda etc.)
+				atașează rezultatele la 'mesaje'
+				CallCloudModel din nou
+			altfel:
+				afișează răspunsul (conversație)
 			*/
+
+			fmt.Println("⚠️ Logica de execuție pentru Cloud este în curs de implementare.")
 		}
 	}
 }
