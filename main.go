@@ -69,9 +69,10 @@ func saveConfig(cfg *Config) {
 type FileCache map[string]string
 
 type PlanStep struct {
-	Action       string `json:"action"`       // "create_file", "edit_file", "execute_command"
-	FilePath     string `json:"file_path"`    // Calea fișierului (dacă e cazul)
-	Instructions string `json:"instructions"` // Ce trebuie să facă Qwen sau ce comandă să ruleze
+	Action       string   `json:"action"`               // "create_file", "edit_file", "execute_command"
+	FilePath     string   `json:"file_path"`            // Calea fișierului țintă (dacă e cazul)
+	Instructions string   `json:"instructions"`         // Ce trebuie să facă Qwen sau ce comandă să ruleze
+	ReadFiles    []string `json:"read_files,omitempty"` // <-- NOU: Memoria de Pas (Context Enrichment)
 }
 
 type ExecutionPlan struct {
@@ -719,7 +720,7 @@ func classifyIntent(userInput string, modelName string) string {
 		"ruleaza", "rulează", "test", "executa", "porneste", "pornește", "run", "go run", "testeaza",
 		"creeaza", "creează", "modifica", "modifică", "adauga", "adaugă", "repara", "repară",
 		"scrie", "implementeaza", "implementează", "sterge", "șterge", "bug", "eroare",
-		"schimba", "schimbă", "refactorizeaza", "actualizeaza", "fa un", "fă un",
+		"schimba", "schimbă", "refactorizeaza", "actualizeaza", "fa un", "fă un", "genereaza", "editeaza",
 	}
 
 	for _, kw := range actionKeywords {
@@ -779,35 +780,66 @@ Utilizator: "ce mai faci?" -> CHAT
 	}
 	return "CHAT"
 }
-func generateExecutionPlan(plannerModel, userInput, projectTree string) (*ExecutionPlan, error) {
+
+func generateExecutionPlan(plannerModel, userInput, projectTree string, persistentDocs string) (*ExecutionPlan, error) {
 	prompt := fmt.Sprintf(`Ești arhitectul strict al unui sistem AI. 
 Scopul tău este să generezi un JSON cu pași, analizând harta de fișiere de mai jos.
 
-ARBORELE FIȘIERELOR EXISTENTE (Nu ai acces la conținutul lor, doar la nume):
+ARBORELE FIȘIERELOR EXISTENTE:
 ===========================
 %s
 ===========================
+%s
 
 CERINȚA UTILIZATORULUI: "%s"
 
-REGULI ABSOLUTE DE PLANIFICARE:
-1. ALEGE FIȘIERUL: Dacă utilizatorul cere o modificare, uită-te în "ARBORELE FIȘIERELOR EXISTENTE". Dacă fișierul apare acolo, folosește OBLIGATORIU acțiunea "edit_file" cu calea sa exactă.
-2. CUM FUNCȚIONEAZĂ "edit_file": Când tu dai comanda "edit_file", sistemul nostru din spate va citi automat conținutul fișierului de pe disc și îl va trimite Coder-ului. Tu trebuie doar să îi scrii instrucțiunile logice 
-3. CREARE: Folosește "create_file" DOAR dacă fișierul nu există în arbore și a fost cerut explicit.
-4. FORMAT: Returnează DOAR un JSON valid, fără explicații.
-5. EXPLICIT: NU copia valorile din exemplul de mai jos! Trebuie să înlocuiești textele scrise cu majuscule cu valorile reale deduse din cerința utilizatorului.
-
-Exemplu de format așteptat:
+REGULI ABSOLUTE DE PLANIFICARE (CITEȘTE CU ATENȚIE):
+1. REGULA PENTRU RULARE (PRIORITATE MAXIMĂ): Dacă utilizatorul cere doar să "ruleze", "testeze" sau "execute" o aplicație, generează EXACT UN SINGUR PAS de tip "execute_command". ESTE STRICT INTERZIS să generezi "edit_file" dacă utilizatorul nu a cerut reparații sau modificări!
+2. REGULA PENTRU EDITARE: Folosește acțiunea "edit_file" DOAR dacă utilizatorul cere explicit să modifici, să adaugi, să scrii sau să repari ceva într-un fișier.
+3. CREARE: Folosește "create_file" DOAR dacă fișierul nu există. Când creezi, scrie în "instructions" absolut tot ce trebuie să conțină fișierul.
+4. CONTEXT ADIȚIONAL (read_files): Când editezi și ai nevoie de informații dintr-un alt fișier, adaugă-l în lista "read_files". Asta înseamnă DOAR CITIRE.
+5. MUTARE COD: DACĂ utilizatorul cere explicit să "MUȚI" (move) cod dintr-un fișier în altul, generează 2 pași: Pas 1 - "edit_file" pe destinație (cu sursa în read_files), Pas 2 - "edit_file" pe sursă (pentru a șterge codul).
+6. CÂMPURI OBLIGATORII: Fiecare pas din JSON TREBUIE să conțină "action", "file_path" și "instructions".
+EXEMPLU 1 - RULARE SIMPLĂ (fără editare):
+{
+  "steps": [
+    {
+      "action": "execute_command",
+      "file_path": "",
+      "instructions": "python main.py"
+    }
+  ]
+}
+EXEMPLU 2 - Editare cu Context (Folosire stiluri, referințe, DOAR CITIRE):
 {
   "steps": [
     {
       "action": "edit_file",
-      "file_path": "<CALEA_EXACTĂ_A_FIȘIERULUI_DIN_ARBORE>",
-      "instructions": "<EXPLICĂ AICI DETALIAT CE TREBUIE SĂ MODIFICE CODER-UL, BAZAT PE CERINȚA UTILIZATORULUI>"
+      "file_path": "contact.html",
+      "instructions": "Infrumuseteaza pagina contact.html folosind clasele din fisierul CSS atasat.",
+      "read_files": ["style.css"]
     }
   ]
 }
-`, projectTree, userInput)
+
+EXEMPLU 3 - Mutare cod:
+{
+  "steps": [
+    {
+      "action": "edit_file",
+      "file_path": "destinatie.go",
+      "instructions": "Copiaza functia X din fisierul sursa aici.",
+      "read_files": ["sursa.go"]
+    },
+    {
+      "action": "edit_file",
+      "file_path": "sursa.go",
+      "instructions": "Sterge functia X din acest fisier deoarece a fost mutata."
+    }
+  ]
+}
+
+`, projectTree, persistentDocs, userInput)
 	reqBody := ChatRequest{
 		Model: plannerModel,
 		Messages: []ChatMessage{
@@ -828,11 +860,14 @@ Exemplu de format așteptat:
 	if err != nil {
 		return nil, err
 	}
+
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
+
 	var chatResp ChatResponse
 	json.Unmarshal(body, &chatResp)
+	fmt.Println(chatResp)
 
 	// Extragem JSON-ul din răspuns în caz că modelul a mai adăugat text "Here is the plan:"
 	jsonStr, found := extractJSONFromText(chatResp.Message.Content)
@@ -935,6 +970,7 @@ func main() {
 		fmt.Printf("📂 [Sistem] Am încărcat %d mesaje anterioare din memorie.\n", len(conversationHistory))
 	}
 	var autoPrompt string
+	var persistentDocs string // <--- NOU: Aici vom stoca documentația de proiect
 
 	for {
 		// --- 2. SCANARE PROASPĂTĂ ---
@@ -944,7 +980,7 @@ func main() {
 		var treeBuilder strings.Builder
 		var contextBuilder strings.Builder // Păstrăm și conținutul pentru Coder (dacă e nevoie la creare)
 
-		treeBuilder.WriteString("📁 Rădăcină Proiect:\n")
+		treeBuilder.WriteString("Căi relative disponibile în proiect:\n")
 
 		filepath.Walk(cwd, func(path string, info os.FileInfo, err error) error {
 			if err != nil {
@@ -994,8 +1030,26 @@ func main() {
 			userInput = scanner.Text()
 		}
 
-		if strings.ToLower(userInput) == "exit" {
+		if strings.ToLower(userInput) == "/exit" {
 			break
+		}
+		if strings.HasPrefix(strings.ToLower(userInput), "/getcontext") {
+			parts := strings.SplitN(userInput, " ", 2)
+			if len(parts) < 2 {
+				fmt.Println("⚠️ Te rog să specifici calea către fișier. Exemplu: /getcontext docs/specificatii.md")
+				continue
+			}
+
+			docPath := strings.TrimSpace(parts[1])
+			content, err := getContent(docPath) // Folosim funcția ta magică care citește și PDF/Docx!
+
+			if err != nil {
+				fmt.Printf("❌ Eroare la citirea documentației '%s': %v\n", docPath, err)
+			} else {
+				persistentDocs = fmt.Sprintf("\n================= DOCUMENTAȚIE / SPECIFICAȚII PROIECT =================\n%s\n=======================================================================\n", content)
+				fmt.Printf("✅ Documentația din '%s' a fost încărcată cu succes în memoria permanentă!\n", docPath)
+			}
+			continue
 		}
 		if strings.ToLower(userInput) == "/setari" {
 			showSettingsMenu(cfg)
@@ -1024,12 +1078,14 @@ func main() {
 				systemContext := fmt.Sprintf(`Ești un asistent programator.
 Ai la dispoziție următoarea structură a proiectului curent:
 %s
+%s
 
+REGULI ABSOLUTE PENTRU COMPORTAMENT ȘI UNELTE:
 REGULI ABSOLUTE PENTRU TOOL-URI:
 1. Dacă întrebarea este despre codul tău existent, FOLOSEȘTE 'toolOpenFile' DOAR pentru fișierele afișate exact în lista de mai sus.
 2. ESTE STRICT INTERZIS să inventezi nume de fișiere sau căi (ex: pointer.md, test.cpp) care nu sunt în listă.
 3. Dacă utilizatorul pune o întrebare teoretică, generală sau de sintaxă (ex: "ce este un pointer?", "cum fac un for?"), RĂSPUNDE DIRECT pe bază de text, FĂRĂ să apelezi niciun tool!
-4. Nu ghici conținutul fișierelor proiectului, citește-le prin tool dacă e nevoie de ele.`, projectTree)
+4. Nu ghici conținutul fișierelor proiectului, citește-le prin tool dacă e nevoie de ele.`, projectTree, persistentDocs)
 
 				mesajeChat := append(conversationHistory, ChatMessage{Role: "user", Content: userInput})
 				mesajeChat = append([]ChatMessage{{Role: "system", Content: systemContext}}, mesajeChat...)
@@ -1073,7 +1129,7 @@ REGULI ABSOLUTE PENTRU TOOL-URI:
 			// Dacă a ajuns aici, înseamnă că intent == "CODE"
 			fmt.Printf("\n[Planificator] 🧠 `%s` analizează cerința și creează planul de acțiune...\n", cfg.PlannerModel)
 
-			plan, err := generateExecutionPlan(cfg.PlannerModel, userInput, projectTree)
+			plan, err := generateExecutionPlan(cfg.PlannerModel, userInput, projectTree, persistentDocs)
 			if err != nil {
 				fmt.Printf("❌ Nu am putut genera planul: %v\n", err)
 				continue
@@ -1105,12 +1161,32 @@ REGULI ABSOLUTE PENTRU TOOL-URI:
 				var toolResult string
 				args := make(map[string]interface{})
 
+				// --- PREGĂTIRE MEMORIE (PLAN + PAS) ---
 				var contextReferinta strings.Builder
+
+				// A. Memoria de Plan (Fișiere deja modificate în pașii anteriori)
 				if len(fisiereModificateContext) > 0 {
 					for fpath, fcontent := range fisiereModificateContext {
-						contextReferinta.WriteString(fmt.Sprintf("\n[FIȘIER REFERINȚĂ (DEJA MODIFICAT): %s]\n```\n%s\n```\n", fpath, fcontent))
+						contextReferinta.WriteString(fmt.Sprintf("\n[MEMORIA DE PLAN - Modificat Anterior: %s]\n```\n%s\n```\n", fpath, fcontent))
 					}
 				}
+
+				// B. Memoria de Pas (Context Enrichment cerut de Planificator)
+				if len(step.ReadFiles) > 0 {
+					for _, readFile := range step.ReadFiles {
+						// Evităm duplicatele: dacă fișierul e deja în Memoria de Plan (a fost modificat proaspăt), nu îl mai citim iar de pe disc
+						if _, alreadyInPlan := fisiereModificateContext[readFile]; !alreadyInPlan {
+							fileContent, err := os.ReadFile(readFile)
+							if err == nil {
+								contextReferinta.WriteString(fmt.Sprintf("\n[MEMORIA DE PAS - Sursă Citire: %s]\n```\n%s\n```\n", readFile, string(fileContent)))
+								fmt.Printf("   📚 [Enrichment] Am atașat context din: %s\n", readFile)
+							} else {
+								fmt.Printf("   ⚠️ [Avertisment] Nu am putut citi fișierul de context: %s\n", readFile)
+							}
+						}
+					}
+				}
+
 				args["referenceContext"] = contextReferinta.String()
 
 				switch step.Action {
@@ -1140,12 +1216,20 @@ REGULI ABSOLUTE PENTRU TOOL-URI:
 					break
 				}
 
-				if strings.Contains(toolResult, "Eroare") || strings.Contains(toolResult, "error") || strings.Contains(toolResult, "Exception") {
+				if strings.Contains(toolResult, "Eroare") || strings.Contains(toolResult, "error") || strings.Contains(toolResult, "Exception") || strings.Contains(toolResult, "Traceback") {
 					fmt.Printf("\n⚠️ Eroare detectată la Pasul %d! Pregătesc auto-repararea...\n", i+1)
-					autoPrompt = fmt.Sprintf(`La executarea planului a apărut eroarea:
-%s
 
-Te rog analizează eroarea, identifică problema și creează un plan NOU pentru a o repara.`, toolResult)
+					autoPrompt = fmt.Sprintf(`A apărut o EROARE CRITICĂ la executarea ultimului pas:
+=========================================
+%s
+=========================================
+
+SARCINĂ STRICTĂ DE AUTO-REPARARE:
+1. CITEȘTE TRACEBACK-UL: Analizează cu atenție log-ul de eroare de mai sus. Numele fișierului real care a crăpat este scris explicit acolo (ex: File "main.py", line X).
+2. FĂRĂ HALUCINAȚII: NU inventa fișiere noi (ex: nu crea un fișier doar pentru că o funcție are acel nume). Uită-te în ARBORELE FIȘIERELOR EXISTENTE și folosește fișierul real.
+3. REPARĂ: Creează un plan NOU cu acțiunea "edit_file" EXACT pe fișierul vinovat pentru a repara eroarea logică.
+4. TESTEAZĂ: La finalul planului, adaugă OBLIGATORIU un pas de "execute_command" pentru a rula aplicația din nou și a verifica dacă s-a reparat.`, toolResult)
+
 					eroareDetectata = true
 					break
 				}
@@ -1165,6 +1249,7 @@ Te rog analizează eroarea, identifică problema și creează un plan NOU pentru
 					Role:    "assistant",
 					Content: "[Sistem: Plan executat cu succes folosind modele locale.]",
 				})
+				saveHistory(conversationHistory)
 			}
 
 		} else {
