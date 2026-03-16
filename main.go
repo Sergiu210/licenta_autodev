@@ -69,12 +69,12 @@ func saveConfig(cfg *Config) {
 type FileCache map[string]string
 
 type PlanStep struct {
-	Action       string   `json:"action"`               // "create_file", "edit_file", "execute_command"
-	FilePath     string   `json:"file_path"`            // Calea fișierului țintă (dacă e cazul)
-	Instructions string   `json:"instructions"`         // Ce trebuie să facă Qwen sau ce comandă să ruleze
-	ReadFiles    []string `json:"read_files,omitempty"` // <-- NOU: Memoria de Pas (Context Enrichment)
+	Action       string   `json:"action"`                // "edit_file", "execute_command", "copy_code"
+	FilePath     string   `json:"file_path"`             // Calea fișierului țintă
+	SourceFile   string   `json:"source_file,omitempty"` // <-- NOU: Sursa de unde copiem
+	Instructions string   `json:"instructions"`          // Instrucțiuni pentru Coder
+	ReadFiles    []string `json:"read_files,omitempty"`  // <-- UNEALTA DE ENRICHMENT
 }
-
 type ExecutionPlan struct {
 	Steps []PlanStep `json:"steps"`
 }
@@ -389,57 +389,27 @@ var autoDevTools = []Tool{
 		Function: ToolFunction{
 			Name:        "toolOpenFile",
 			Description: "Citește conținutul unui fișier din proiect.",
-			Parameters: ToolParameters{
-				Type: "object",
-				Properties: map[string]ToolProperty{
-					"filePath": {
-						Type:        "string",
-						Description: "Calea către fișierul care trebuie citit,foloseste calea relativa",
-					},
-				},
-				Required: []string{"filePath"},
-			},
+			Parameters:  ToolParameters{ /* ... rămâne la fel ... */ },
 		},
 	},
 	{
 		Type: "function",
 		Function: ToolFunction{
 			Name:        "toolExecuteCommand",
-			Description: "Execută o comandă in terminal. ",
-			Parameters: ToolParameters{
-				Type: "object",
-				Properties: map[string]ToolProperty{
-					"command": {Type: "string", Description: "Comanda de executat in terminal"},
-				},
-				Required: []string{"command"},
-			},
-		},
-	},
-	{
-		Type: "function",
-		Function: ToolFunction{
-			Name:        "toolCreateFile",
-			Description: "Deleagă crearea unui fișier către AI-ul Coder Expert. Tu doar îi dai instrucțiuni despre ce să scrie.",
-			Parameters: ToolParameters{
-				Type: "object",
-				Properties: map[string]ToolProperty{
-					"filePath":     {Type: "string", Description: "Calea către fișierul ce trebuie creat."},
-					"instructions": {Type: "string", Description: "Instrucțiuni detaliate pentru AI-ul Coder despre ce cod trebuie să scrie în acest fișier."},
-				},
-				Required: []string{"filePath", "instructions"},
-			},
+			Description: "Execută o comandă in terminal.",
+			Parameters:  ToolParameters{ /* ... rămâne la fel ... */ },
 		},
 	},
 	{
 		Type: "function",
 		Function: ToolFunction{
 			Name:        "toolEditFile",
-			Description: "Deleagă rescrierea unui fișier existent către AI-ul Coder Expert pentru a repara o eroare sau a adăuga ceva.",
+			Description: "Deleagă scrierea, crearea sau rescrierea unui fișier către AI-ul Coder Expert. Dacă fișierul nu există, sistemul îl va crea automat.",
 			Parameters: ToolParameters{
 				Type: "object",
 				Properties: map[string]ToolProperty{
-					"filePath":     {Type: "string", Description: "Calea către fișierul de modificat."},
-					"instructions": {Type: "string", Description: "Explică-i AI-ului Coder ce eroare a apărut sau ce modificare logică trebuie aplicată întregului cod din fișier."},
+					"filePath":     {Type: "string", Description: "Calea către fișierul de modificat sau creat."},
+					"instructions": {Type: "string", Description: "Explică ce cod trebuie scris de la zero sau ce modificare logică trebuie aplicată."},
 				},
 				Required: []string{"filePath", "instructions"},
 			},
@@ -451,15 +421,6 @@ var autoDevTools = []Tool{
 
 func handleToolCall(toolName string, args map[string]interface{}, coderModel string, projectContext string) string {
 	switch toolName {
-
-	case "toolCreateDirectory":
-		path, _ := args["dirPath"].(string)
-
-		if err := os.MkdirAll(path, 0755); err != nil {
-			return fmt.Sprintf("Eroare la crearea directorului %s: %v", path, err)
-		}
-		return fmt.Sprintf("Directorul `%s` a fost creat cu succes.", path)
-
 	case "toolExecuteCommand":
 		cmdRaw, ok := args["command"].(string)
 		if !ok {
@@ -487,122 +448,107 @@ func handleToolCall(toolName string, args map[string]interface{}, coderModel str
 			result += fmt.Sprintf("\nEroare: %v", err)
 		}
 		return result
-
-	case "toolCreateFile":
-		path, _ := args["filePath"].(string)
+	case "toolCopyCode":
+		targetPath, _ := args["filePath"].(string)
+		sourcePath, _ := args["sourceFile"].(string)
 		instructions, _ := args["instructions"].(string)
+		stepHistory, _ := args["stepHistory"].(string)
 
-		approved, feedback := askUserConfirmation(fmt.Sprintf("Creare fișier(e) pornind de la: `%s`\n   Instrucțiuni trimise către Qwen: %s", path, instructions))
+		if isFileProtected(targetPath) || isFileProtected(sourcePath) {
+			return "Eroare: Nu poți interacționa cu fișiere protejate!"
+		}
+
+		// Citim fișierul sursă
+		sourceContentBytes, err := os.ReadFile(sourcePath)
+		if err != nil {
+			return fmt.Sprintf("Eroare: Sursa '%s' nu există sau nu poate fi citită.", sourcePath)
+		}
+
+		// Citim / Creăm destinația
+		targetExists := true
+		targetContentBytes, err := os.ReadFile(targetPath)
+		if err != nil {
+			targetExists = false
+			os.MkdirAll(filepath.Dir(targetPath), 0755)
+		}
+		targetContent := string(targetContentBytes)
+		if !targetExists {
+			targetContent = "// Fișier nou. Adaugă codul copiat aici."
+		}
+
+		approved, feedback := askUserConfirmation(fmt.Sprintf("Copiere/Mutare din `%s` în `%s`\n   Instrucțiuni: %s", sourcePath, targetPath, instructions))
 		if !approved {
 			return feedback
 		}
 
-		fmt.Printf("\n[Sub-Agent] 🧠 Apelez %s pentru a genera codul...\n", coderModel)
-
-		// 1. Modificăm promptul pentru a impune un format strict multi-fișier
-		prompt := fmt.Sprintf(`Ești un expert programator.
-Ai acces la următorul proiect existent.
-
-================= PROIECT EXISTENT =================
-%s
-====================================================
-
-CERINȚĂ:
+		prompt := fmt.Sprintf(`Ești un expert în integrarea codului.
+Ai o memorie a pașilor:
 %s
 
-Calea principală sugerată pentru creare este: %s
-
-IMPORTANT: Trebuie să returnezi codul folosind EXACT acest format pentru FIECARE fișier pe care îl generezi (chiar dacă generezi unul singur). Nu adăuga alte explicații, returnează DOAR blocurile în acest format:
-
-[FILE: calea/catre/fisier.ext]
+Ai misiunea de a TRANSFERA cod conform instrucțiunilor.
+================= SURSĂ (%s) (De aici extragi) =================
 %s
-codul complet aici
+==================================================================
+================= DESTINAȚIE (%s) (Aici inserezi/integrezi) ====
 %s
-`, projectContext, instructions, path, "```", "```")
+==================================================================
+
+INSTRUCȚIUNI DE TRANSFER:
+%s
+
+REGULI ABSOLUTE:
+1. Returnează DOAR codul final COMPLET pentru fișierul DESTINAȚIE (%s).
+2. Nu trunchia codul. Scrie-l complet și corect.
+`, stepHistory, sourcePath, string(sourceContentBytes), targetPath, targetContent, instructions, targetPath)
 
 		resp, err := CallOllamaGenerate(coderModel, prompt)
 		if err != nil {
-			return fmt.Sprintf("Eroare la generarea codului cu %s: %v", coderModel, err)
+			return fmt.Sprintf("Eroare la generare: %v", err)
 		}
+		cleanCode := extractCodeFromMarkdown(resp)
 
-		// 2. Logica de extragere a mai multor fișiere
-		filesCreated := 0
-		var outputLog strings.Builder
-
-		// Împărțim răspunsul după marcajul nostru custom
-		parts := strings.Split(resp, "[FILE: ")
-
-		// Dacă modelul nu a respectat deloc formatul (Fallback pentru un singur fișier)
-		if len(parts) <= 1 && !strings.Contains(resp, "[FILE:") {
-			cleanCode := extractCodeFromMarkdown(resp)
-			dir := filepath.Dir(path)
-			os.MkdirAll(dir, 0755)
-			if err := os.WriteFile(path, []byte(cleanCode), 0644); err != nil {
-				return fmt.Sprintf("Eroare la scriere pe disc pentru %s: %v", path, err)
-			}
-			return fmt.Sprintf("✅ Fișierul `%s` a fost generat (Fallback single-file).", path)
+		// Salvăm direct
+		if err := os.WriteFile(targetPath, []byte(cleanCode), 0644); err != nil {
+			return fmt.Sprintf("Eroare la salvare: %v", err)
 		}
-
-		// 3. Iterăm prin blocurile găsite și le salvăm pe disc
-		for _, part := range parts {
-			if strings.TrimSpace(part) == "" {
-				continue // Sărim peste bucățile goale (ex: dinainte de primul [FILE:)
-			}
-
-			// Căutăm unde se închide paranteza pentru calea fișierului
-			endBracket := strings.Index(part, "]")
-			if endBracket == -1 {
-				continue
-			}
-
-			// Extragem calea și restul textului (care e codul)
-			filePath := strings.TrimSpace(part[:endBracket])
-			fileContentRaw := part[endBracket+1:]
-
-			// Folosim funcția ta existentă ca să scoatem codul efectiv dintre backticks (```)
-			cleanCode := extractCodeFromMarkdown(fileContentRaw)
-			if cleanCode == "" {
-				continue
-			}
-
-			// Salvăm pe disc
-			dir := filepath.Dir(filePath)
-			os.MkdirAll(dir, 0755) // Creăm automat folderele dacă nu există
-
-			if err := os.WriteFile(filePath, []byte(cleanCode), 0644); err != nil {
-				outputLog.WriteString(fmt.Sprintf("❌ Eroare salvare `%s`: %v\n", filePath, err))
-				continue
-			}
-
-			outputLog.WriteString(fmt.Sprintf("✅ `%s` creat cu succes.\n", filePath))
-			filesCreated++
-		}
-
-		if filesCreated == 0 {
-			return "⚠️ LLM-ul a răspuns, dar nu s-au putut extrage fișiere valide. Incearcă să reformulezi cerința."
-		}
-
-		return fmt.Sprintf("Operațiune încheiată. %d fișiere salvate:\n%s", filesCreated, outputLog.String())
+		return fmt.Sprintf("✅ Codul a fost integrat cu succes în %s de către %s.", targetPath, coderModel)
 	case "toolEditFile":
 		path, _ := args["filePath"].(string)
 		instructions, _ := args["instructions"].(string)
 		referenceContext, _ := args["referenceContext"].(string)
+		stepHistory, _ := args["stepHistory"].(string) // Extragem Memoria!
 		if isFileProtected(path) {
 			return "Eroare: Acces interzis. Nu poți modifica fișiere de sistem sau biblioteci externe!"
 		}
 
-		approved, feedback := askUserConfirmation(fmt.Sprintf("Modificare fișier: `%s`\n   Instrucțiuni reparare către Coder: %s", path, instructions))
+		// 1. Verificăm dacă fișierul există
+		fileExists := true
+		currentContentBytes, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				fileExists = false
+			} else {
+				return fmt.Sprintf("Eroare la citirea fișierului: %v", err)
+			}
+		}
+
+		actionName := "Modificare"
+		if !fileExists {
+			actionName = "Creare"
+		}
+
+		approved, feedback := askUserConfirmation(fmt.Sprintf("%s fișier: `%s`\n   Instrucțiuni: %s", actionName, path, instructions))
 		if !approved {
 			return feedback
 		}
 
-		currentContentBytes, err := os.ReadFile(path)
-		if err != nil {
-			return fmt.Sprintf("Eroare citire: %v", err)
-		}
 		currentContent := string(currentContentBytes)
+		if !fileExists {
+			currentContent = "// Acest fișier este nou și momentan este gol. Scrie codul de la zero conform cerinței."
+		}
 
-		fmt.Printf("\n[Sub-Agent] 🧠 Apelez %s pentru a repara/modifica fișierul...\n", coderModel)
+		fmt.Printf("\n[Sub-Agent] 🧠 Apelez %s pentru a %s fișierul...\n", coderModel, strings.ToLower(actionName))
+
 		refBlock := ""
 		if referenceContext != "" {
 			refBlock = fmt.Sprintf(`
@@ -614,33 +560,32 @@ ESTE INTERZIS SĂ RETURNEZI COD PENTRU ACESTE FIȘIERE!
 ===================================================================
 `, referenceContext)
 		}
-		// 1. PROMPT OPTIMIZAT ANTI-LENE
+
 		prompt := fmt.Sprintf(`Ești un expert programator.
-Trebuie să modifici următorul fișier conform cerinței.
+Ai o memorie a pașilor executați anterior pentru a înțelege contextul:
 %s
-================= FIȘIER ȚINTĂ DE MODIFICAT (%s) =================
+
+%s
+================= FIȘIER ȚINTĂ (%s) =================
 %s
 ==================================================================
 
-CERINȚĂ MODIFICARE:
+CERINȚĂ PENTRU ACEST PAS:
 %s
 
 REGULI ABSOLUTE:
-1. Returnează codul COMPLET și EXACT DOAR pentru fișierul țintă (%s).
-2. ESTE STRICT INTERZIS să omiți cod folosind "// restul codului aici".
-3. NU scrie și NU returna cod pentru fișierele din secțiunea de Referință.
-4. Răspunde doar cu codul încapsulat în blocuri markdown.
-`, refBlock, path, currentContent, instructions, path)
+1. Returnează codul COMPLET și EXACT DOAR pentru fișierul țintă. FĂRĂ EXPLICAȚII.
+2. NU folosi "// restul codului". Scrie cap-coadă.
+`, stepHistory, refBlock, path, currentContent, instructions)
 
 		resp, err := CallOllamaGenerate(coderModel, prompt)
 		if err != nil {
-			return fmt.Sprintf("Eroare la modificarea codului cu %s: %v", coderModel, err)
+			return fmt.Sprintf("Eroare la generarea codului cu %s: %v", coderModel, err)
 		}
 
 		cleanCode := extractCodeFromMarkdown(resp)
 
 		// 2. VALIDARE ANTI-TRUNCHIERE (SAFETY CHECK)
-		// Verificăm dacă AI-ul a lăsat comentarii de "lene"
 		lazyKeywords := []string{"// ...", "/* ... */", "// restul codului", "// rest of"}
 		for _, kw := range lazyKeywords {
 			if strings.Contains(strings.ToLower(cleanCode), kw) {
@@ -648,41 +593,36 @@ REGULI ABSOLUTE:
 			}
 		}
 
-		// Verificăm diferența de dimensiune (dacă fișierul nou e cu 80% mai mic, e suspect)
-		if len(cleanCode) < int(float64(len(currentContent))*0.2) {
-			return "Eroare: Codul generat este suspect de mic față de original. Pentru a preveni ștergerea fișierului, acțiunea a fost blocată."
+		// Verificăm dimensiunea DOAR dacă fișierul exista deja
+		if fileExists && len(currentContent) > 0 {
+			if len(cleanCode) < int(float64(len(currentContent))*0.2) {
+				return "Eroare: Codul generat este suspect de mic față de original. Pentru a preveni ștergerea fișierului, acțiunea a fost blocată."
+			}
+
+			// SISTEM DE BACKUP AUTOMAT
+			backupPath := path + ".bak"
+			err = os.WriteFile(backupPath, currentContentBytes, 0644)
+			if err == nil {
+				fmt.Printf("📦 Backup creat la: %s\n", backupPath)
+			}
 		}
 
-		// 3. SISTEM DE BACKUP AUTOMAT
-		backupPath := path + ".bak"
-		err = os.WriteFile(backupPath, currentContentBytes, 0644)
-		if err != nil {
-			fmt.Printf("⚠️ Nu s-a putut crea backup pentru %s: %v\n", path, err)
-		} else {
-			fmt.Printf("📦 Backup creat la: %s\n", backupPath)
+		// 3. Creăm folderele necesare dacă nu există (vital pentru fișiere noi)
+		dir := filepath.Dir(path)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Sprintf("Eroare la crearea directoarelor pentru %s: %v", path, err)
 		}
 
 		// 4. SCRIEREA FINALĂ
 		if err := os.WriteFile(path, []byte(cleanCode), 0644); err != nil {
-			return fmt.Sprintf("Eroare la salvarea fișierului modificat: %v", err)
+			return fmt.Sprintf("Eroare la salvarea fișierului: %v", err)
 		}
 
-		return fmt.Sprintf("Fișierul a fost rescris cu succes de %s. Un backup a fost salvat ca %s.", coderModel, backupPath)
-	case "toolOpenFile":
-		path, ok := args["filePath"].(string)
-		if !ok {
-			return "Eroare: calea lipsește."
+		statusMsg := "rescris"
+		if !fileExists {
+			statusMsg = "creat"
 		}
-
-		// Curățăm calea: dacă primim o cale absolută, luăm doar numele fișierului
-		// sau îl forțăm să fie relativ la folderul curent
-		cleanPath := filepath.Base(path)
-
-		content, err := os.ReadFile(cleanPath)
-		if err != nil {
-			return fmt.Sprintf("Eroare: Fișierul '%s' nu a fost găsit în folderul curent. Fișiere disponibile: \n%s", cleanPath, getProjectFiles("."))
-		}
-		return string(content)
+		return fmt.Sprintf("Fișierul a fost %s cu succes de %s.", statusMsg, coderModel)
 	default:
 		return fmt.Sprintf("Eroare: Tool-ul %s nu este recunoscut.", toolName)
 	}
@@ -793,20 +733,23 @@ ARBORELE FIȘIERELOR EXISTENTE:
 
 CERINȚA UTILIZATORULUI: "%s"
 
+// Găsește secțiunea REGULI ABSOLUTE DE PLANIFICARE și înlocuiește-o cu asta:
+
 REGULI ABSOLUTE DE PLANIFICARE (CITEȘTE CU ATENȚIE):
-1. REGULA PENTRU RULARE (PRIORITATE MAXIMĂ): Dacă utilizatorul cere doar să "ruleze", "testeze" sau "execute" o aplicație, generează EXACT UN SINGUR PAS de tip "execute_command". ESTE STRICT INTERZIS să generezi "edit_file" dacă utilizatorul nu a cerut reparații sau modificări!
-2. REGULA PENTRU EDITARE: Folosește acțiunea "edit_file" DOAR dacă utilizatorul cere explicit să modifici, să adaugi, să scrii sau să repari ceva într-un fișier.
-3. CREARE: Folosește "create_file" DOAR dacă fișierul nu există. Când creezi, scrie în "instructions" absolut tot ce trebuie să conțină fișierul.
-4. CONTEXT ADIȚIONAL (read_files): Când editezi și ai nevoie de informații dintr-un alt fișier, adaugă-l în lista "read_files". Asta înseamnă DOAR CITIRE.
-5. MUTARE COD: DACĂ utilizatorul cere explicit să "MUȚI" (move) cod dintr-un fișier în altul, generează 2 pași: Pas 1 - "edit_file" pe destinație (cu sursa în read_files), Pas 2 - "edit_file" pe sursă (pentru a șterge codul).
-6. CÂMPURI OBLIGATORII: Fiecare pas din JSON TREBUIE să conțină "action", "file_path" și "instructions".
-EXEMPLU 1 - RULARE SIMPLĂ (fără editare):
+1. REGULA PENTRU RULARE: Pentru a testa sau rula, folosește DOAR "execute_command".
+2. REGULA PENTRU FIȘIERE (CREARE/EDITARE): Folosește "edit_file" pentru a scrie de la zero sau a modifica un fișier.
+3. UNEALTA DE COPIERE/MUTARE (copy_code): Dacă trebuie să transferi, copiezi sau muți cod dintr-un fișier în altul, folosește acțiunea "copy_code". Setează "source_file" cu fișierul de unde iei codul și "file_path" cu destinația unde îl pui.
+4. UNEALTA DE CONTEXT ENRICHMENT (read_files): Dacă ai nevoie ca AI-ul Coder să "citească" un fișier pentru a-i înțelege funcțiile, adaugă acel fișier în lista "read_files".
+5. CÂMPURI OBLIGATORII: "action", "file_path" și "instructions" sunt obligatorii.
+
+EXEMPLU - COPIERE / MUTARE COD:
 {
   "steps": [
     {
-      "action": "execute_command",
-      "file_path": "",
-      "instructions": "python main.py"
+      "action": "copy_code",
+      "source_file": "vechi.go",
+      "file_path": "nou.go",
+      "instructions": "Extrage functia de Login din fisierul sursa si adapteaz-o in fisierul destinatie. Daca e o mutare, scrie la final sa comenteze/stearga vechea functie."
     }
   ]
 }
@@ -818,23 +761,6 @@ EXEMPLU 2 - Editare cu Context (Folosire stiluri, referințe, DOAR CITIRE):
       "file_path": "contact.html",
       "instructions": "Infrumuseteaza pagina contact.html folosind clasele din fisierul CSS atasat.",
       "read_files": ["style.css"]
-    }
-  ]
-}
-
-EXEMPLU 3 - Mutare cod:
-{
-  "steps": [
-    {
-      "action": "edit_file",
-      "file_path": "destinatie.go",
-      "instructions": "Copiaza functia X din fisierul sursa aici.",
-      "read_files": ["sursa.go"]
-    },
-    {
-      "action": "edit_file",
-      "file_path": "sursa.go",
-      "instructions": "Sterge functia X din acest fisier deoarece a fost mutata."
     }
   ]
 }
@@ -917,6 +843,52 @@ func saveHistory(history []ChatMessage) {
 	if err == nil {
 		os.WriteFile(historyFileName, data, 0644)
 	}
+}
+
+// analyzeErrorAndSuggest scanează logul de eroare și generează sugestii pentru AI
+func analyzeErrorAndSuggest(errorLog string, failedCmd string) string {
+	var hints strings.Builder
+	errorLogLower := strings.ToLower(errorLog)
+	cmdLower := strings.ToLower(failedCmd)
+
+	hints.WriteString("🔍 ANALIZĂ AUTOMATĂ ȘI SUGESTII DE REPARARE PENTRU AI:\n")
+
+	// 1. Detectare Python
+	if strings.Contains(cmdLower, "python") || strings.Contains(cmdLower, "pip") || strings.Contains(cmdLower, ".py") || strings.Contains(errorLogLower, "traceback (most recent call last)") {
+		hints.WriteString("- Limbaj detectat: Python 🐍\n")
+		if strings.Contains(errorLogLower, "modulenotfounderror") || strings.Contains(errorLogLower, "no module named") {
+			hints.WriteString("- 💡 Diagnostic: O bibliotecă lipsește.\n- 🛠️ Acțiune recomandată: Adaugă un prim pas de tip 'execute_command' pentru a rula `pip install <nume_pachet>` (ex: `pip install requests`), apoi un al doilea pas pentru a rula din nou scriptul.\n")
+		} else if strings.Contains(errorLogLower, "syntaxerror") || strings.Contains(errorLogLower, "indentationerror") {
+			hints.WriteString("- 💡 Diagnostic: Eroare de sintaxă sau indentare.\n- 🛠️ Acțiune recomandată: Folosește 'edit_file' pentru a corecta linia exactă menționată în Traceback.\n")
+		} else {
+			hints.WriteString("- 🛠️ Comenzi utile de referință: `python ./cale/script.py`, `pip install pachet`.\n")
+		}
+	}
+
+	// 2. Detectare Go
+	if strings.Contains(cmdLower, "go ") || strings.HasSuffix(cmdLower, ".go") || strings.Contains(errorLogLower, "goroutine") || strings.Contains(errorLogLower, "build failed") {
+		hints.WriteString("- Limbaj detectat: Go 🐹\n")
+		if strings.Contains(errorLogLower, "cannot find package") || strings.Contains(errorLogLower, "no required module provides") {
+			hints.WriteString("- 💡 Diagnostic: Pachet extern lipsă.\n- 🛠️ Acțiune recomandată: Adaugă un pas 'execute_command' cu `go mod tidy` sau `go get <cale_pachet>` înainte de a rula din nou.\n")
+		} else if strings.Contains(errorLogLower, "undefined:") {
+			hints.WriteString("- 💡 Diagnostic: Variabilă, funcție sau import nedefinit.\n- 🛠️ Acțiune recomandată: Folosește 'edit_file' pentru a verifica importurile și a repara denumirile din fișier.\n")
+		}
+	}
+
+	// 3. Detectare Node.js / JavaScript
+	if strings.Contains(cmdLower, "node ") || strings.Contains(cmdLower, "npm ") || strings.HasSuffix(cmdLower, ".js") || strings.Contains(errorLogLower, "referenceerror") {
+		hints.WriteString("- Limbaj detectat: JavaScript / Node.js 🟨\n")
+		if strings.Contains(errorLogLower, "cannot find module") {
+			hints.WriteString("- 💡 Diagnostic: Modul NPM lipsă.\n- 🛠️ Acțiune recomandată: Adaugă un pas 'execute_command' cu `npm install <nume_pachet>`.\n")
+		}
+	}
+
+	hints.WriteString("\n🧠 CUM SĂ GÂNDEȘTI ACEASTĂ REPARARE (Chain of Thought):\n")
+	hints.WriteString("Pasul A: Identifică din eroare CARE este fișierul vinovat sau pachetul lipsă.\n")
+	hints.WriteString("Pasul B: Gândește-te dacă trebuie să editezi codul (edit_file) SAU să instalezi ceva în terminal (execute_command).\n")
+	hints.WriteString("Pasul C: Creează noul plan JSON aplicând soluția.\n")
+
+	return hints.String()
 }
 func main() {
 	cwd, err := os.Getwd()
@@ -1081,7 +1053,6 @@ Ai la dispoziție următoarea structură a proiectului curent:
 %s
 
 REGULI ABSOLUTE PENTRU COMPORTAMENT ȘI UNELTE:
-REGULI ABSOLUTE PENTRU TOOL-URI:
 1. Dacă întrebarea este despre codul tău existent, FOLOSEȘTE 'toolOpenFile' DOAR pentru fișierele afișate exact în lista de mai sus.
 2. ESTE STRICT INTERZIS să inventezi nume de fișiere sau căi (ex: pointer.md, test.cpp) care nu sunt în listă.
 3. Dacă utilizatorul pune o întrebare teoretică, generală sau de sintaxă (ex: "ce este un pointer?", "cum fac un for?"), RĂSPUNDE DIRECT pe bază de text, FĂRĂ să apelezi niciun tool!
@@ -1152,6 +1123,10 @@ REGULI ABSOLUTE PENTRU TOOL-URI:
 			fisiereModificateContext := make(map[string]string)
 			eroareDetectata := false
 
+			// ---> NOU: Inițializăm Jurnalul de Memorie al Planului
+			var istoricPasi strings.Builder
+			istoricPasi.WriteString("CE AI FĂCUT PÂNĂ ACUM ÎN ACEST PLAN:\n")
+
 			for i, step := range plan.Steps {
 				if strings.TrimSpace(step.Instructions) == "" {
 					continue
@@ -1174,30 +1149,54 @@ REGULI ABSOLUTE PENTRU TOOL-URI:
 				// B. Memoria de Pas (Context Enrichment cerut de Planificator)
 				if len(step.ReadFiles) > 0 {
 					for _, readFile := range step.ReadFiles {
-						// Evităm duplicatele: dacă fișierul e deja în Memoria de Plan (a fost modificat proaspăt), nu îl mai citim iar de pe disc
-						if _, alreadyInPlan := fisiereModificateContext[readFile]; !alreadyInPlan {
-							fileContent, err := os.ReadFile(readFile)
+
+						// --- 1. SMART PATH RESOLVER (Găsim calea reală) ---
+						actualPath := readFile
+						if _, err := os.Stat(actualPath); os.IsNotExist(err) {
+							// Dacă nu există direct, îl căutăm după nume în tot proiectul
+							filepath.Walk(".", func(p string, info os.FileInfo, err error) error {
+								if err == nil && !info.IsDir() && info.Name() == filepath.Base(readFile) {
+									actualPath = p // Am găsit fișierul ascuns într-un folder!
+								}
+								return nil
+							})
+						}
+
+						// --- 2. CĂUTĂM ÎN MEMORIA DE PLAN (Fișiere abia modificate) ---
+						foundInMemory := false
+						for fpath := range fisiereModificateContext {
+							// Comparație flexibilă (ex: frontend/search.js se potrivește cu search.js)
+							if filepath.Base(fpath) == filepath.Base(actualPath) {
+								// ESTE DEJA ÎN CONTEXT DIN BLOCUL A! Nu mai printăm conținutul din nou în `contextReferinta`.
+								fmt.Printf("   📚 [Enrichment] '%s' a fost cerut, dar este DEJA pus pe masă din Memoria de Plan (evităm duplicarea).\n", actualPath)
+								foundInMemory = true
+								break
+							}
+						}
+
+						// --- 3. CĂUTĂM PE DISC (Dacă nu e deja în memorie) ---
+						if !foundInMemory {
+							fileContent, err := os.ReadFile(actualPath)
 							if err == nil {
-								contextReferinta.WriteString(fmt.Sprintf("\n[MEMORIA DE PAS - Sursă Citire: %s]\n```\n%s\n```\n", readFile, string(fileContent)))
-								fmt.Printf("   📚 [Enrichment] Am atașat context din: %s\n", readFile)
+								contextReferinta.WriteString(fmt.Sprintf("\n[MEMORIA DE PAS - Sursă Citire: %s]\n```\n%s\n```\n", actualPath, string(fileContent)))
+								fmt.Printf("   📚 [Enrichment] Am atașat context de pe DISC din: %s\n", actualPath)
 							} else {
-								fmt.Printf("   ⚠️ [Avertisment] Nu am putut citi fișierul de context: %s\n", readFile)
+								fmt.Printf("   ⚠️ [Avertisment] Nu am putut găsi fișierul de context absolut deloc: %s\n", readFile)
 							}
 						}
 					}
 				}
-
+				args["referenceContext"] = contextReferinta.String()
+				args["stepHistory"] = istoricPasi.String() // AI-ul primeste istoria
 				args["referenceContext"] = contextReferinta.String()
 
 				switch step.Action {
-				case "create_directory":
-					args["dirPath"] = step.FilePath
-					toolResult = handleToolCall("toolCreateDirectory", args, cfg.CoderModel, contextBuilder.String())
-				case "create_file":
+				case "copy_code": // ---> NOU: Executăm tool-ul de copiere
 					args["filePath"] = step.FilePath
+					args["sourceFile"] = step.SourceFile
 					args["instructions"] = step.Instructions
-					toolResult = handleToolCall("toolCreateFile", args, cfg.CoderModel, contextBuilder.String())
-				case "edit_file":
+					toolResult = handleToolCall("toolCopyCode", args, cfg.CoderModel, contextBuilder.String())
+				case "edit_file": // <--- Acum preia și crearea și editarea!
 					args["filePath"] = step.FilePath
 					args["instructions"] = step.Instructions
 					toolResult = handleToolCall("toolEditFile", args, cfg.CoderModel, contextBuilder.String())
@@ -1234,7 +1233,7 @@ SARCINĂ STRICTĂ DE AUTO-REPARARE:
 					break
 				}
 
-				if step.Action == "edit_file" || step.Action == "create_file" {
+				if step.Action == "edit_file" {
 					newContentBytes, err := os.ReadFile(step.FilePath)
 					if err == nil {
 						fisiereModificateContext[step.FilePath] = string(newContentBytes)
