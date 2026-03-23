@@ -722,6 +722,9 @@ Utilizator: "ce mai faci?" -> CHAT
 }
 
 func generateExecutionPlan(plannerModel, userInput, projectTree string, persistentDocs string) (*ExecutionPlan, error) {
+	// =========================================================================
+	// PASUL 1: GENERAREA PRIMULUI PLAN (DRAFT)
+	// =========================================================================
 	prompt := fmt.Sprintf(`Ești arhitectul strict al unui sistem AI. 
 Scopul tău este să generezi un JSON cu pași, analizând harta de fișiere de mai jos.
 
@@ -733,78 +736,130 @@ ARBORELE FIȘIERELOR EXISTENTE:
 
 CERINȚA UTILIZATORULUI: "%s"
 
-// Găsește secțiunea REGULI ABSOLUTE DE PLANIFICARE și înlocuiește-o cu asta:
-
 REGULI ABSOLUTE DE PLANIFICARE (CITEȘTE CU ATENȚIE):
-1. REGULA PENTRU RULARE: Pentru a testa sau rula, folosește DOAR "execute_command".
-2. REGULA PENTRU FIȘIERE (CREARE/EDITARE): Folosește "edit_file" pentru a scrie de la zero sau a modifica un fișier.
-3. UNEALTA DE COPIERE/MUTARE (copy_code): Dacă trebuie să transferi, copiezi sau muți cod dintr-un fișier în altul, folosește acțiunea "copy_code". Setează "source_file" cu fișierul de unde iei codul și "file_path" cu destinația unde îl pui.
-4. UNEALTA DE CONTEXT ENRICHMENT (read_files): Dacă ai nevoie ca AI-ul Coder să "citească" un fișier pentru a-i înțelege funcțiile, adaugă acel fișier în lista "read_files".
-5. CÂMPURI OBLIGATORII: "action", "file_path" și "instructions" sunt obligatorii.
+1. STRUCTURA DATELOR:
+   - "action" POATE FI DOAR UNA DIN URMĂTOARELE 3 VALORI STRICE: "edit_file", "execute_command", "copy_code". NU INVENTA acțiuni noi.
+   - "file_path" ESTE STRICT UN STRING (o singură cale de fișier), NICIODATĂ O LISTĂ.
+   - "read_files" este STRICT O LISTĂ de stringuri (ex: ["fisier1.py", "fisier2.md"]) și se folosește OBLIGATORIU dacă asistentul are nevoie de detalii, clase, ID-uri sau endpoint-uri din alte fișiere pentru a scrie codul corect.
 
-EXEMPLU - COPIERE / MUTARE COD:
-{
-  "steps": [
-    {
-      "action": "copy_code",
-      "source_file": "vechi.go",
-      "file_path": "nou.go",
-      "instructions": "Extrage functia de Login din fisierul sursa si adapteaz-o in fisierul destinatie. Daca e o mutare, scrie la final sa comenteze/stearga vechea functie."
-    }
-  ]
-}
-EXEMPLU 2 - Editare cu Context (Folosire stiluri, referințe, DOAR CITIRE):
+2. LOGICA DE EXECUTIE PENTRU SCRIPTURI: Dacă utilizatorul cere să procesezi fișiere complexe, TREBUIE să planifici crearea unui script prin "edit_file", urmată de rularea lui prin "execute_command".
+
+EXEMPLU EDITARE CU ENRICHMENT (CUM CITEȘTI CONTEXTUL):
 {
   "steps": [
     {
       "action": "edit_file",
-      "file_path": "contact.html",
-      "instructions": "Infrumuseteaza pagina contact.html folosind clasele din fisierul CSS atasat.",
-      "read_files": ["style.css"]
+      "file_path": "frontend.js",
+      "instructions": "Folosește endpoint-urile descrise în server.py pentru a face fetch.",
+      "read_files": ["server.py"] 
     }
   ]
 }
 
+EXEMPLU PENTRU SCRIPTURI:
+{
+  "steps": [
+    {
+      "action": "edit_file",
+      "file_path": "procesare.py",
+      "instructions": "Scrie un script..."
+    },
+    {
+      "action": "execute_command",
+      "file_path": "",
+      "instructions": "python procesare.py"
+    }
+  ]
+}
+
+REGULĂ VITALĂ: Exemplele de mai sus sunt DOAR DEMONSTRATIVE. Este STRICT INTERZIS să copiezi numele fișierelor din exemple. Creează un plan ORIGINAL.
+
+REȚINE: Returnează DOAR cod JSON valid, fără text suplimentar.
 `, projectTree, persistentDocs, userInput)
-	reqBody := ChatRequest{
+
+	// Cererea 1: Către Ollama
+	reqBody1 := ChatRequest{
 		Model: plannerModel,
 		Messages: []ChatMessage{
 			{Role: "user", Content: prompt},
 		},
 		Stream: false,
 		Options: map[string]interface{}{
-			"temperature": 0.1, // Temperatură mică pentru a forța un output determinist
+			"temperature": 0.1,
 		},
 	}
 
-	// Notă: Ollama suportă forțarea JSON-ului dacă specifici formatul în request,
-	// dar la nivelul API-ului curent din `ChatRequest`-ul tău, adăugăm manual în structură dacă e nevoie,
-	// sau ne bazăm pe instrucțiunile din prompt.
-
-	jsonData, _ := json.Marshal(reqBody)
-	resp, err := http.Post(ollamaBaseURL+"/chat", "application/json", bytes.NewBuffer(jsonData))
+	jsonData1, _ := json.Marshal(reqBody1)
+	resp1, err := http.Post(ollamaBaseURL+"/chat", "application/json", bytes.NewBuffer(jsonData1))
 	if err != nil {
 		return nil, err
 	}
+	defer resp1.Body.Close()
 
-	defer resp.Body.Close()
+	body1, _ := io.ReadAll(resp1.Body)
+	var chatResp1 ChatResponse
+	json.Unmarshal(body1, &chatResp1)
 
-	body, _ := io.ReadAll(resp.Body)
-
-	var chatResp ChatResponse
-	json.Unmarshal(body, &chatResp)
-	fmt.Println(chatResp)
-
-	// Extragem JSON-ul din răspuns în caz că modelul a mai adăugat text "Here is the plan:"
-	jsonStr, found := extractJSONFromText(chatResp.Message.Content)
+	draftJSONStr, found := extractJSONFromText(chatResp1.Message.Content)
 	if !found {
-		// Fallback: încercăm să parsăm direct tot răspunsul
-		jsonStr = chatResp.Message.Content
+		draftJSONStr = chatResp1.Message.Content
 	}
 
+	fmt.Printf("\n[Reflecție Internă] 🧐 Am generat planul draft. Verific dacă folosește enrichment (read_files)...\n")
+
+	// =========================================================================
+	// PASUL 2: REFLECȚIA ȘI CORECTAREA (SELF-CORRECTION)
+	// =========================================================================
+
+	reflectionPrompt := fmt.Sprintf(`Acesta este planul JSON pe care l-ai generat pentru a rezolva cerința: "%s"
+
+PLANUL TĂU CURENT:
+%s
+
+SARcinĂ DE REFLECȚIE ȘI CORECTARE:
+1. Analizează cu atenție planul tău. Dacă în cerință utilizatorul menționează explicit fișiere din care să "te folosești", să "te integrezi cu ele" sau să îți "îmbogățești cunoștințele" (ex: "folosindu-te de X", "citind din Y"), AI FOLOSIT câmpul "read_files"?
+2. Dacă ai uitat să pui fișierele menționate în array-ul "read_files" la pașii relevanți (de tip "edit_file"), MODIFICĂ planul acum.
+3. Exemplu: Dacă trebuie să editezi 'index.html' folosind 'script_shopping_cart.py', pasul tău trebuie să arate cam așa: 
+   "action": "edit_file", "file_path": "index.html", "read_files": ["script_shopping_cart.py"].
+
+Rescrie planul JSON final, corectat. Returnează DOAR JSON-ul.`, userInput, draftJSONStr)
+
+	reqBody2 := ChatRequest{
+		Model: plannerModel,
+		Messages: []ChatMessage{
+			// Păstrăm contextul: Îi dăm promptul inițial...
+			{Role: "system", Content: prompt},
+			// Apoi îi dăm sarcina de reflecție...
+			{Role: "user", Content: reflectionPrompt},
+		},
+		Stream: false,
+		Options: map[string]interface{}{
+			"temperature": 0.1,
+		},
+	}
+
+	jsonData2, _ := json.Marshal(reqBody2)
+	resp2, err := http.Post(ollamaBaseURL+"/chat", "application/json", bytes.NewBuffer(jsonData2))
+	if err != nil {
+		return nil, err
+	}
+	defer resp2.Body.Close()
+
+	body2, _ := io.ReadAll(resp2.Body)
+	var chatResp2 ChatResponse
+	json.Unmarshal(body2, &chatResp2)
+
+	finalJSONStr, found := extractJSONFromText(chatResp2.Message.Content)
+	if !found {
+		finalJSONStr = chatResp2.Message.Content
+	}
+
+	// =========================================================================
+	// PASUL 3: PARSAREA FINALĂ
+	// =========================================================================
 	var plan ExecutionPlan
-	if err := json.Unmarshal([]byte(jsonStr), &plan); err != nil {
-		return nil, fmt.Errorf("Eroare la parsarea planului JSON: %v. Răspuns brut: %s", err, jsonStr)
+	if err := json.Unmarshal([]byte(finalJSONStr), &plan); err != nil {
+		return nil, fmt.Errorf("Eroare la parsarea planului JSON corectat: %v. Răspuns brut: %s", err, finalJSONStr)
 	}
 
 	return &plan, nil
@@ -1218,16 +1273,24 @@ REGULI ABSOLUTE PENTRU COMPORTAMENT ȘI UNELTE:
 				if strings.Contains(toolResult, "Eroare") || strings.Contains(toolResult, "error") || strings.Contains(toolResult, "Exception") || strings.Contains(toolResult, "Traceback") {
 					fmt.Printf("\n⚠️ Eroare detectată la Pasul %d! Pregătesc auto-repararea...\n", i+1)
 
+					// AICI ESTE MAGIA: Apelăm funcția ta de analiză pentru a extrage hint-urile!
+					sugestii := analyzeErrorAndSuggest(toolResult, step.Instructions)
+
 					autoPrompt = fmt.Sprintf(`A apărut o EROARE CRITICĂ la executarea ultimului pas:
 =========================================
 %s
 =========================================
 
+%s
+
 SARCINĂ STRICTĂ DE AUTO-REPARARE:
-1. CITEȘTE TRACEBACK-UL: Analizează cu atenție log-ul de eroare de mai sus. Numele fișierului real care a crăpat este scris explicit acolo (ex: File "main.py", line X).
-2. FĂRĂ HALUCINAȚII: NU inventa fișiere noi (ex: nu crea un fișier doar pentru că o funcție are acel nume). Uită-te în ARBORELE FIȘIERELOR EXISTENTE și folosește fișierul real.
-3. REPARĂ: Creează un plan NOU cu acțiunea "edit_file" EXACT pe fișierul vinovat pentru a repara eroarea logică.
-4. TESTEAZĂ: La finalul planului, adaugă OBLIGATORIU un pas de "execute_command" pentru a rula aplicația din nou și a verifica dacă s-a reparat.`, toolResult)
+1. CITEȘTE TRACEBACK-UL ȘI SUGESTIILE DE MAI SUS. 
+2. LOGICA DE REPARARE:
+   - DACĂ eroarea zice "ModuleNotFoundError" sau "No module named", primul tău pas TREBUIE să fie o acțiune "execute_command" care să ruleze "pip install <nume_pachet>" (sau echivalentul în Node/Go).
+   - DACĂ eroarea e de sintaxă sau logică în cod, folosește "edit_file" pentru a repara fișierul.
+3. TESTEAZĂ: Ultimul pas din noul tău plan trebuie să fie întotdeauna "execute_command" pentru a rula scriptul/aplicația din nou și a verifica dacă s-a reparat.
+
+Returnează DOAR JSON-ul cu noul plan de acțiune!`, toolResult, sugestii)
 
 					eroareDetectata = true
 					break
