@@ -906,44 +906,84 @@ func analyzeErrorAndSuggest(errorLog string, failedCmd string) string {
 	errorLogLower := strings.ToLower(errorLog)
 	cmdLower := strings.ToLower(failedCmd)
 
-	hints.WriteString("🔍 ANALIZĂ AUTOMATĂ ȘI SUGESTII DE REPARARE PENTRU AI:\n")
+	hints.WriteString("🔍 [DIAGNOSTIC CRITIC PENTRU PLANIFICATOR]:\n")
+	hints.WriteString(fmt.Sprintf("- Comanda care a eșuat: `%s`\n", failedCmd))
 
-	// 1. Detectare Python
-	if strings.Contains(cmdLower, "python") || strings.Contains(cmdLower, "pip") || strings.Contains(cmdLower, ".py") || strings.Contains(errorLogLower, "traceback (most recent call last)") {
-		hints.WriteString("- Limbaj detectat: Python 🐍\n")
-		if strings.Contains(errorLogLower, "modulenotfounderror") || strings.Contains(errorLogLower, "no module named") {
-			hints.WriteString("- 💡 Diagnostic: O bibliotecă lipsește.\n- 🛠️ Acțiune recomandată: Adaugă un prim pas de tip 'execute_command' pentru a rula `pip install <nume_pachet>` (ex: `pip install requests`), apoi un al doilea pas pentru a rula din nou scriptul.\n")
-		} else if strings.Contains(errorLogLower, "syntaxerror") || strings.Contains(errorLogLower, "indentationerror") {
-			hints.WriteString("- 💡 Diagnostic: Eroare de sintaxă sau indentare.\n- 🛠️ Acțiune recomandată: Folosește 'edit_file' pentru a corecta linia exactă menționată în Traceback.\n")
-		} else {
-			hints.WriteString("- 🛠️ Comenzi utile de referință: `python ./cale/script.py`, `pip install pachet`.\n")
-		}
+	// 1. Corelarea Comenzii cu Eroarea (Reasoning Logic)
+	if strings.Contains(cmdLower, "python") && strings.Contains(errorLogLower, "indexerror") {
+		hints.WriteString("- 💡 Diagnostic: Scriptul Python a încercat să acceseze un element dintr-o listă care nu există.\n")
+		hints.WriteString("- 📂 Sursă Probabilă: Modul în care scriptul procesează (split) datele din fișierele text.\n")
+		hints.WriteString("- ⚠️ RECOMANDARE: Verifică dacă fișierul citit are formatul așteptat (ex: conține caracterul ':' folosit la split).\n")
 	}
 
-	// 2. Detectare Go
-	if strings.Contains(cmdLower, "go ") || strings.HasSuffix(cmdLower, ".go") || strings.Contains(errorLogLower, "goroutine") || strings.Contains(errorLogLower, "build failed") {
-		hints.WriteString("- Limbaj detectat: Go 🐹\n")
-		if strings.Contains(errorLogLower, "cannot find package") || strings.Contains(errorLogLower, "no required module provides") {
-			hints.WriteString("- 💡 Diagnostic: Pachet extern lipsă.\n- 🛠️ Acțiune recomandată: Adaugă un pas 'execute_command' cu `go mod tidy` sau `go get <cale_pachet>` înainte de a rula din nou.\n")
-		} else if strings.Contains(errorLogLower, "undefined:") {
-			hints.WriteString("- 💡 Diagnostic: Variabilă, funcție sau import nedefinit.\n- 🛠️ Acțiune recomandată: Folosește 'edit_file' pentru a verifica importurile și a repara denumirile din fișier.\n")
-		}
+	// 3. Detecție Pachete (doar dacă eroarea indică clar importuri)
+	if strings.Contains(errorLogLower, "import") || strings.Contains(errorLogLower, "module") {
+		hints.WriteString("- 📦 Lipsă dependințe: Se recomandă instalarea pachetului lipsă via terminal.\n")
 	}
 
-	// 3. Detectare Node.js / JavaScript
-	if strings.Contains(cmdLower, "node ") || strings.Contains(cmdLower, "npm ") || strings.HasSuffix(cmdLower, ".js") || strings.Contains(errorLogLower, "referenceerror") {
-		hints.WriteString("- Limbaj detectat: JavaScript / Node.js 🟨\n")
-		if strings.Contains(errorLogLower, "cannot find module") {
-			hints.WriteString("- 💡 Diagnostic: Modul NPM lipsă.\n- 🛠️ Acțiune recomandată: Adaugă un pas 'execute_command' cu `npm install <nume_pachet>`.\n")
-		}
-	}
-
-	hints.WriteString("\n🧠 CUM SĂ GÂNDEȘTI ACEASTĂ REPARARE (Chain of Thought):\n")
-	hints.WriteString("Pasul A: Identifică din eroare CARE este fișierul vinovat sau pachetul lipsă.\n")
-	hints.WriteString("Pasul B: Gândește-te dacă trebuie să editezi codul (edit_file) SAU să instalezi ceva în terminal (execute_command).\n")
-	hints.WriteString("Pasul C: Creează noul plan JSON aplicând soluția.\n")
+	hints.WriteString("\n🧠 CHAIN OF THOUGHT RECOMANDAT:\n")
+	hints.WriteString("1. Citește fișierul implicat în comandă folosind 'read_files' pentru a vedea codul și datele de intrare.\n")
+	hints.WriteString("2. Identifică neconcordanța între formatul datelor și logica de split.\n")
+	hints.WriteString("3. Editează fișierul pentru a adăuga validări (ex: if len(parts) > 1).\n")
 
 	return hints.String()
+}
+func validateAndFixPlan(plannerModel string, currentPlanJSON string, userInput string, projectTree string) (*ExecutionPlan, error) {
+	fmt.Println("\n[Self-Critique] 🕵️ Master-ul verifică dacă planul are nevoie de date de test/fișiere inițiale...")
+
+	validationPrompt := fmt.Sprintf(`Ești un inspector de calitate (QA Validator) sever pentru un sistem AI autonom.
+Analizează planul JSON (Draft) de mai jos, conceput pentru a rezolva cerința utilizatorului: "%s"
+
+ARBORELE FIȘIERELOR EXISTENTE PE DISC:
+===========================
+%s
+===========================
+
+PLANUL PROPUS (DRAFT):
+%s
+
+SARCINĂ CRITICĂ DE VALIDARE ȘI CORECTARE (APLICĂ ACESTE 4 REGULI):
+1. VALIDARE DATE INIȚIALE (Anti-Crash): Dacă planul presupune citirea unui fișier, verifică dacă acel fișier EXISTĂ deja în Arborele de mai sus. Dacă NU există, scriptul va crăpa. CORECȚIE: ADAUGĂ OBLIGATORIU un nou pas la începutul planului (action: "edit_file") pentru a crea acel fișier cu câteva date de test (mock data) relevante.
+2. VALIDARE CONTEXT (Enrichment): Dacă în cerință utilizatorul menționează explicit fișiere din care să citească, te-ai asigurat că folosești câmpul "read_files"? Dacă ai uitat, adaugă-l ("read_files": ["nume_fisier"]).
+3. VALIDARE CERINȚĂ COMPLETĂ: Asigură-te că nu ai omis niciun detaliu sau pas de execuție ("execute_command") cerut inițial.
+4. VALIDARE UNELTE STRICTE (Anti-Hallucination): Câmpul "action" din JSON POATE AVEA DOAR UNA DIN ACESTE 3 VALORI: "edit_file", "execute_command", "copy_code". ESTE STRICT INTERZIS să inventezi alte acțiuni (ex: "create_file", "run_script", "read_file" sunt invalide). CORECȚIE: Dacă găsești acțiuni inventate, înlocuiește-le cu cea corectă (ex: pentru a crea un fișier, folosește "edit_file").
+5. VALIDARE INTEGRITATE IMPORTURI (Regulă Nouă): Analizează instrucțiunile de cod. Dacă un fișier (ex: main.py) depinde de altul (ex: database.py), asigură-te că planul include instrucțiuni EXPLICITE pentru Coder să adauge liniile de 'import' necesare. Dacă un pas de editare folosește funcții din alt fișier, acel fișier TREBUIE să fie în lista "read_files" a acelui pas pentru ca Coder-ul să îi vadă semnătura.
+
+Rescrie planul JSON final, aplicând toate corecțiile de mai sus. Returnează DOAR codul JSON valid. FĂRĂ EXPLICAȚII SAU TEXT SUPLIMENTAR!`, userInput, projectTree, currentPlanJSON)
+
+	reqBody := ChatRequest{
+		Model: plannerModel,
+		Messages: []ChatMessage{
+			{Role: "user", Content: validationPrompt},
+		},
+		Stream: false,
+		Options: map[string]interface{}{
+			"temperature": 0.1, // Foarte mică pentru determinism
+		},
+	}
+
+	jsonData, _ := json.Marshal(reqBody)
+	resp, err := http.Post(ollamaBaseURL+"/chat", "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	var chatResp ChatResponse
+	json.Unmarshal(body, &chatResp)
+
+	finalJSONStr, found := extractJSONFromText(chatResp.Message.Content)
+	if !found {
+		finalJSONStr = chatResp.Message.Content
+	}
+
+	var plan ExecutionPlan
+	if err := json.Unmarshal([]byte(finalJSONStr), &plan); err != nil {
+		return nil, fmt.Errorf("Eroare la parsarea planului validat: %v", err)
+	}
+
+	return &plan, nil
 }
 func main() {
 	cwd, err := os.Getwd()
@@ -1155,10 +1195,21 @@ REGULI ABSOLUTE PENTRU COMPORTAMENT ȘI UNELTE:
 			// Dacă a ajuns aici, înseamnă că intent == "CODE"
 			fmt.Printf("\n[Planificator] 🧠 `%s` analizează cerința și creează planul de acțiune...\n", cfg.PlannerModel)
 
-			plan, err := generateExecutionPlan(cfg.PlannerModel, userInput, projectTree, persistentDocs)
+			// 1. Generarea planului inițial
+			draftPlan, err := generateExecutionPlan(cfg.PlannerModel, userInput, projectTree, persistentDocs)
 			if err != nil {
 				fmt.Printf("❌ Nu am putut genera planul: %v\n", err)
 				continue
+			}
+
+			// Convertim draft-ul înapoi în JSON string pentru a-l trimite la validare
+			draftPlanBytes, _ := json.Marshal(draftPlan)
+
+			// 2. Trecerea prin filtrul de Self-Critique (Validare QA)
+			plan, err := validateAndFixPlan(cfg.PlannerModel, string(draftPlanBytes), userInput, projectTree)
+			if err != nil {
+				fmt.Printf("⚠️ Eroare la validarea planului (folosesc draft-ul inițial): %v\n", err)
+				plan = draftPlan // Fallback de siguranță la planul inițial dacă validarea dă eroare
 			}
 
 			if len(plan.Steps) == 0 {
@@ -1267,7 +1318,7 @@ REGULI ABSOLUTE PENTRU COMPORTAMENT ȘI UNELTE:
 				if strings.Contains(toolResult, "OPRIT") || strings.Contains(toolResult, "respins") {
 					fmt.Println("\n⚠️ Execuția planului a fost întreruptă de utilizator.")
 					eroareDetectata = true
-					break
+					continue
 				}
 
 				if strings.Contains(toolResult, "Eroare") || strings.Contains(toolResult, "error") || strings.Contains(toolResult, "Exception") || strings.Contains(toolResult, "Traceback") {
