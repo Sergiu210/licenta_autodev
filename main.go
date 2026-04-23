@@ -1196,21 +1196,21 @@ REGULI ABSOLUTE PENTRU COMPORTAMENT ȘI UNELTE:
 			fmt.Printf("\n[Planificator] 🧠 `%s` analizează cerința și creează planul de acțiune...\n", cfg.PlannerModel)
 
 			// 1. Generarea planului inițial
-			draftPlan, err := generateExecutionPlan(cfg.PlannerModel, userInput, projectTree, persistentDocs)
+			plan, err := generateExecutionPlan(cfg.PlannerModel, userInput, projectTree, persistentDocs)
 			if err != nil {
 				fmt.Printf("❌ Nu am putut genera planul: %v\n", err)
 				continue
 			}
 
 			// Convertim draft-ul înapoi în JSON string pentru a-l trimite la validare
-			draftPlanBytes, _ := json.Marshal(draftPlan)
+			//	draftPlanBytes, _ := json.Marshal(draftPlan)
 
 			// 2. Trecerea prin filtrul de Self-Critique (Validare QA)
-			plan, err := validateAndFixPlan(cfg.PlannerModel, string(draftPlanBytes), userInput, projectTree)
-			if err != nil {
-				fmt.Printf("⚠️ Eroare la validarea planului (folosesc draft-ul inițial): %v\n", err)
-				plan = draftPlan // Fallback de siguranță la planul inițial dacă validarea dă eroare
-			}
+			//plan, err := validateAndFixPlan(cfg.PlannerModel, string(draftPlanBytes), userInput, projectTree)
+			//if err != nil {
+			//	fmt.Printf("⚠️ Eroare la validarea planului (folosesc draft-ul inițial): %v\n", err)
+			//	plan = draftPlan // Fallback de siguranță la planul inițial dacă validarea dă eroare
+			//}
 
 			if len(plan.Steps) == 0 {
 				fmt.Println("⚠️ Planul generat este gol. Probabil cerința a fost neclară.")
