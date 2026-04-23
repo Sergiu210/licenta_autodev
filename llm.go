@@ -32,11 +32,11 @@ type ToolCall struct {
 }
 
 type ChatRequest struct {
-	Model    string                 `json:"model"`
-	Messages []ChatMessage          `json:"messages"`
-	Stream   bool                   `json:"stream"`
-	Tools    []Tool                 `json:"tools,omitempty"`
-	Options  map[string]interface{} `json:"options,omitempty"` // <-- Pentru context 32k
+	Model    string        `json:"model"`
+	Messages []ChatMessage `json:"messages"`
+	Stream   bool          `json:"stream"`
+	//Tools    []Tool                 `json:"tools,omitempty"`
+	Options map[string]interface{} `json:"options,omitempty"` // <-- Pentru context 32k
 }
 
 type Tool struct {
@@ -111,7 +111,7 @@ func CallOllamaChat(modelName string, messages []ChatMessage, tools []Tool) (Cha
 		Model:    modelName,
 		Messages: messages,
 		Stream:   false,
-		Tools:    tools,
+		//Tools:    tools,
 		Options: map[string]interface{}{
 			"num_ctx": 16384, // Context generos pentru chat (16k)
 		},

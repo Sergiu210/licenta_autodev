@@ -1230,8 +1230,13 @@ REGULI ABSOLUTE PENTRU COMPORTAMENT ȘI UNELTE:
 			eroareDetectata := false
 
 			// ---> NOU: Inițializăm Jurnalul de Memorie al Planului
+			// ---> NOU: Inițializăm Jurnalul de Memorie al Planului
 			var istoricPasi strings.Builder
 			istoricPasi.WriteString("CE AI FĂCUT PÂNĂ ACUM ÎN ACEST PLAN:\n")
+
+			// ---> REZUMAT PENTRU ISTORIC (Ce salvăm în autodev_history.json)
+			var rezumatSistem strings.Builder
+			rezumatSistem.WriteString("[Sistem: Rezultatul execuției planului a fost următorul]\n")
 
 			for i, step := range plan.Steps {
 				if strings.TrimSpace(step.Instructions) == "" {
@@ -1255,32 +1260,26 @@ REGULI ABSOLUTE PENTRU COMPORTAMENT ȘI UNELTE:
 				// B. Memoria de Pas (Context Enrichment cerut de Planificator)
 				if len(step.ReadFiles) > 0 {
 					for _, readFile := range step.ReadFiles {
-
-						// --- 1. SMART PATH RESOLVER (Găsim calea reală) ---
+						// ... (Logica ta de Smart Path Resolver rămâne exact la fel) ...
 						actualPath := readFile
 						if _, err := os.Stat(actualPath); os.IsNotExist(err) {
-							// Dacă nu există direct, îl căutăm după nume în tot proiectul
 							filepath.Walk(".", func(p string, info os.FileInfo, err error) error {
 								if err == nil && !info.IsDir() && info.Name() == filepath.Base(readFile) {
-									actualPath = p // Am găsit fișierul ascuns într-un folder!
+									actualPath = p
 								}
 								return nil
 							})
 						}
 
-						// --- 2. CĂUTĂM ÎN MEMORIA DE PLAN (Fișiere abia modificate) ---
 						foundInMemory := false
 						for fpath := range fisiereModificateContext {
-							// Comparație flexibilă (ex: frontend/search.js se potrivește cu search.js)
 							if filepath.Base(fpath) == filepath.Base(actualPath) {
-								// ESTE DEJA ÎN CONTEXT DIN BLOCUL A! Nu mai printăm conținutul din nou în `contextReferinta`.
-								fmt.Printf("   📚 [Enrichment] '%s' a fost cerut, dar este DEJA pus pe masă din Memoria de Plan (evităm duplicarea).\n", actualPath)
+								fmt.Printf("   📚 [Enrichment] '%s' a fost cerut, dar este DEJA pus pe masă din Memoria de Plan.\n", actualPath)
 								foundInMemory = true
 								break
 							}
 						}
 
-						// --- 3. CĂUTĂM PE DISC (Dacă nu e deja în memorie) ---
 						if !foundInMemory {
 							fileContent, err := os.ReadFile(actualPath)
 							if err == nil {
@@ -1294,15 +1293,14 @@ REGULI ABSOLUTE PENTRU COMPORTAMENT ȘI UNELTE:
 				}
 				args["referenceContext"] = contextReferinta.String()
 				args["stepHistory"] = istoricPasi.String() // AI-ul primeste istoria
-				args["referenceContext"] = contextReferinta.String()
 
 				switch step.Action {
-				case "copy_code": // ---> NOU: Executăm tool-ul de copiere
+				case "copy_code":
 					args["filePath"] = step.FilePath
 					args["sourceFile"] = step.SourceFile
 					args["instructions"] = step.Instructions
 					toolResult = handleToolCall("toolCopyCode", args, cfg.CoderModel, contextBuilder.String())
-				case "edit_file": // <--- Acum preia și crearea și editarea!
+				case "edit_file":
 					args["filePath"] = step.FilePath
 					args["instructions"] = step.Instructions
 					toolResult = handleToolCall("toolEditFile", args, cfg.CoderModel, contextBuilder.String())
@@ -1315,16 +1313,19 @@ REGULI ABSOLUTE PENTRU COMPORTAMENT ȘI UNELTE:
 
 				fmt.Printf("[Rezultat Pas %d]:\n%s\n", i+1, toolResult)
 
+				// --- VERIFICĂRI STATUS PAS ---
+
 				if strings.Contains(toolResult, "OPRIT") || strings.Contains(toolResult, "respins") {
 					fmt.Println("\n⚠️ Execuția planului a fost întreruptă de utilizator.")
+					rezumatSistem.WriteString(fmt.Sprintf("- Pas %d [%s]: ⚠️ Anulat/Respins de utilizator.\n", i+1, step.Action))
 					eroareDetectata = true
-					continue
+					break // Folosim break pentru a opri forțat următorii pași dacă utilizatorul refuză
 				}
 
 				if strings.Contains(toolResult, "Eroare") || strings.Contains(toolResult, "error") || strings.Contains(toolResult, "Exception") || strings.Contains(toolResult, "Traceback") {
 					fmt.Printf("\n⚠️ Eroare detectată la Pasul %d! Pregătesc auto-repararea...\n", i+1)
+					rezumatSistem.WriteString(fmt.Sprintf("- Pas %d [%s]: ❌ Eșuat cu eroare.\n", i+1, step.Action))
 
-					// AICI ESTE MAGIA: Apelăm funcția ta de analiză pentru a extrage hint-urile!
 					sugestii := analyzeErrorAndSuggest(toolResult, step.Instructions)
 
 					autoPrompt = fmt.Sprintf(`A apărut o EROARE CRITICĂ la executarea ultimului pas:
@@ -1347,6 +1348,14 @@ Returnează DOAR JSON-ul cu noul plan de acțiune!`, toolResult, sugestii)
 					break
 				}
 
+				// --- SUCCES: Actualizăm Jurnalul și Rezumatul ---
+				target := step.FilePath
+				if target == "" {
+					target = "terminal"
+				}
+				rezumatSistem.WriteString(fmt.Sprintf("- Pas %d [%s] pe '%s': ✅ Executat cu succes.\n", i+1, step.Action, target))
+				istoricPasi.WriteString(fmt.Sprintf("-> Am executat cu succes '%s' pe '%s'.\n", step.Action, target))
+
 				if step.Action == "edit_file" {
 					newContentBytes, err := os.ReadFile(step.FilePath)
 					if err == nil {
@@ -1355,14 +1364,19 @@ Returnează DOAR JSON-ul cu noul plan de acțiune!`, toolResult, sugestii)
 				}
 			}
 
+			// =================================================================
+			// SALVARE MEMORIE INDIFERENT DE STATUS (Succes, Oprit sau Eroare)
+			// =================================================================
+			conversationHistory = append(conversationHistory, ChatMessage{Role: "user", Content: userInput})
+			conversationHistory = append(conversationHistory, ChatMessage{
+				Role:    "assistant",
+				Content: rezumatSistem.String(),
+			})
+			saveHistory(conversationHistory)
+			fmt.Println("\n💾 Rezumatul execuției a fost salvat în memoria pe termen scurt.")
+
 			if !eroareDetectata {
-				fmt.Println("\n✅ Plan finalizat cu succes.")
-				conversationHistory = append(conversationHistory, ChatMessage{Role: "user", Content: userInput})
-				conversationHistory = append(conversationHistory, ChatMessage{
-					Role:    "assistant",
-					Content: "[Sistem: Plan executat cu succes folosind modele locale.]",
-				})
-				saveHistory(conversationHistory)
+				fmt.Println("✅ Plan finalizat cu succes 100%.")
 			}
 
 		} else {
