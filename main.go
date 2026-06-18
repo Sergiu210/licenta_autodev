@@ -84,7 +84,7 @@ type ExecutionPlan struct {
 func showSettingsMenu(cfg *Config) {
 	scanner := bufio.NewScanner(os.Stdin)
 	for {
-		fmt.Println("\n=== ⚙️  MENIU SETĂRI AUTODEV ===")
+		fmt.Println("\n=== ⚙️  MENIU SETĂRI VAULTCODER ===")
 		fmt.Printf("1. Backend curent: %s\n", cfg.Provider)
 		fmt.Printf("2. Model Planificator (Master): %s\n", cfg.PlannerModel)
 		fmt.Printf("3. Model Coder (Worker): %s\n", cfg.CoderModel)
@@ -105,11 +105,11 @@ func showSettingsMenu(cfg *Config) {
 		switch choice {
 		case "1":
 			providers := []string{"ollama", "vllm", "openai", "gemini"}
-			fmt.Println("\n🌐 Alege noul backend:")
+			fmt.Println("\n Alege noul backend:")
 			for i, p := range providers {
 				fmt.Printf("  %d. %s\n", i+1, p)
 			}
-			fmt.Print("\n👉 Introdu numărul (1-4) sau scrie numele: ")
+			fmt.Print("\n Introdu numărul (1-4) sau scrie numele: ")
 
 			if scanner.Scan() {
 				input := strings.TrimSpace(scanner.Text())
@@ -158,7 +158,7 @@ func showSettingsMenu(cfg *Config) {
 					for i, m := range modele {
 						fmt.Printf("  %d. %s\n", i+1, m)
 					}
-					fmt.Print("\n👉 Introdu numărul modelului (sau scrie manual numele): ")
+					fmt.Print("\n Introdu numărul modelului (sau scrie manual numele): ")
 
 					if scanner.Scan() {
 						input := strings.TrimSpace(scanner.Text())
@@ -203,15 +203,15 @@ func showSettingsMenu(cfg *Config) {
 				input := strings.TrimSpace(scanner.Text())
 				if input != "" {
 					cfg.APIKey = input
-					fmt.Println("✅ API Key actualizat!")
+					fmt.Println(" API Key actualizat!")
 				}
 			}
 		case "5":
 			saveConfig(cfg)
-			fmt.Println("💾 Setări salvate cu succes!")
+			fmt.Println(" Setări salvate cu succes!")
 			return
 		default:
-			fmt.Println("❌ Opțiune invalidă. Te rog alege o cifră de la 1 la 5.")
+			fmt.Println(" Opțiune invalidă. Te rog alege o cifră de la 1 la 5.")
 		}
 	}
 }
@@ -346,7 +346,7 @@ func isCommandForbidden(cmd string) bool {
 
 func askUserConfirmation(actionDesc string) (bool, string) {
 	fmt.Printf("\n⚠️  [ATENȚIE] AI-ul Planificator a cerut acțiunea:\n   => %s\n", actionDesc)
-	fmt.Print("Aprobare execuție? [y/n] (sau feedback text): ")
+	fmt.Print("Aprobați execuția? [y/n] :")
 
 	scanner := bufio.NewScanner(os.Stdin)
 	if scanner.Scan() {
@@ -512,7 +512,7 @@ REGULI ABSOLUTE:
 		if err := os.WriteFile(targetPath, []byte(cleanCode), 0644); err != nil {
 			return fmt.Sprintf("Eroare la salvare: %v", err)
 		}
-		return fmt.Sprintf("✅ Codul a fost integrat cu succes în %s de către %s.", targetPath, coderModel)
+		return fmt.Sprintf(" Codul a fost integrat cu succes în %s de către %s.", targetPath, coderModel)
 	case "toolEditFile":
 		path, _ := args["filePath"].(string)
 		instructions, _ := args["instructions"].(string)
@@ -548,7 +548,7 @@ REGULI ABSOLUTE:
 			currentContent = "// Acest fișier este nou și momentan este gol. Scrie codul de la zero conform cerinței."
 		}
 
-		fmt.Printf("\n[Sub-Agent] 🧠 Apelez %s pentru a %s fișierul...\n", coderModel, strings.ToLower(actionName))
+		fmt.Printf("\n[Sub-Agent]  Apelez %s pentru a %s fișierul...\n", coderModel, strings.ToLower(actionName))
 
 		refBlock := ""
 		if referenceContext != "" {
@@ -577,10 +577,17 @@ CERINȚĂ:
 
 REGULI DE EDITARE:
 - Pentru a MODIFICA: Pune codul vechi în <search> și cel nou în <replace>.
+- REGULĂ CRITICĂ PENTRU <search>: Textul din interiorul tag-ului <search> TREBUIE să fie o copie EXACTĂ (1:1) a codului existent în fișier. ESTE STRICT INTERZIS să inventezi comentarii, să trunchiezi codul sau să modifici conținutul vechi în <search>. Dacă inventezi cod acolo, sistemul se va bloca!
 - Pentru a ADĂUGA o metodă/funcție nouă într-o CLASĂ existentă: NU lăsa <search> gol! Pune ultima metodă din acea clasă în <search> și scrie-o din nou în <replace> urmată imediat de metoda ta nouă.
 - Pentru a ADĂUGA funcții globale / independente: Lasă <search></search> complet gol, iar sistemul le va insera corect la final.
 - Pentru a adăuga în interiorul funcției main(): NU lăsa search gol. Pune ultima linie din main() în <search> și rescrie finalul funcției în <replace>.
-<diff>
+
+- REGULĂ SINTAXĂ ABSOLUTĂ: Structura XML de diff trebuie să fie PERFECTĂ. 
+  Fiecare deschidere de <search> trebuie să aibă OBLIGATORIU un </search> dedicat. 
+  Fiecare deschidere de <replace> trebuie să aibă OBLIGATORIU un </replace> dedicat.
+  ESTE STRICT INTERZIS să încurci tag-urile XML (search/replace) cu tag-urile HTML din interiorul codului (cum ar fi <div> sau </div>)!
+
+  <diff>
   <search>
   codul vechi care trebuie înlocuit
   </search>
@@ -617,7 +624,7 @@ Poți folosi mai multe blocuri <diff> dacă trebuie să modifici în mai multe l
 			backupPath := path + ".bak"
 			err = os.WriteFile(backupPath, currentContentBytes, 0644)
 			if err == nil {
-				fmt.Printf("📦 Backup creat la: %s\n", backupPath)
+				fmt.Printf(" Backup creat la: %s\n", backupPath)
 			}
 		}
 
@@ -674,7 +681,7 @@ func classifyIntent(userInput string, modelName string) string {
 		"ruleaza", "rulează", "test", "executa", "porneste", "pornește", "run", "go run", "testeaza",
 		"creeaza", "creează", "modifica", "modifică", "adauga", "adaugă", "repara", "repară",
 		"scrie", "implementeaza", "implementează", "sterge", "șterge", "bug", "eroare",
-		"schimba", "schimbă", "refactorizeaza", "actualizeaza", "fa un", "fă un", "genereaza", "editeaza",
+		"schimba", "schimbă", "refactorizeaza", "actualizeaza", "fa un", "fă un", "genereaza", "editeaza", "develop", "Develop",
 	}
 
 	for _, kw := range actionKeywords {
@@ -710,6 +717,7 @@ Utilizator: "ce mai faci?" -> CHAT
 		// 3. SCĂDEREA TEMPERATURII pentru a evita răspunsuri neașteptate
 		Options: map[string]interface{}{
 			"temperature": 0.1,
+			"top_p":       0.5,
 		},
 	}
 
@@ -755,8 +763,10 @@ REGULI ABSOLUTE DE PLANIFICARE (CITEȘTE CU ATENȚIE):
    - "action" POATE FI DOAR UNA DIN URMĂTOARELE 3 VALORI STRICE: "edit_file", "execute_command", "copy_code". NU INVENTA acțiuni noi.
    - "file_path" ESTE STRICT UN STRING (o singură cale de fișier), NICIODATĂ O LISTĂ.
    - "read_files" este STRICT O LISTĂ de stringuri (ex: ["fisier1.py", "fisier2.md"]) și se folosește OBLIGATORIU dacă asistentul are nevoie de detalii, clase, ID-uri sau endpoint-uri din alte fișiere pentru a scrie codul corect.
-
+	
 2. LOGICA DE EXECUTIE PENTRU SCRIPTURI: Dacă utilizatorul cere să procesezi fișiere complexe, TREBUIE să planifici crearea unui script prin "edit_file", urmată de rularea lui prin "execute_command".
+
+3. DETALIEREA INSTRUCȚIUNILOR (CRITIC): Câmpul "instructions" trebuie să fie EXHAUSTIV. Este STRICT INTERZIS să fii vag (ex: "importă librării" sau "fă scriptul"). Trebuie să incluzi absolut toate detaliile, constrângerile, timpii, numele variabilelor și logica dorită de utilizator. Coder-ul nu vede cerința inițială, scrie codul STRICT pe baza a ce îi pui tu în "instructions"!
 
 EXEMPLU EDITARE CU ENRICHMENT (CUM CITEȘTI CONTEXTUL):
 {
@@ -764,7 +774,7 @@ EXEMPLU EDITARE CU ENRICHMENT (CUM CITEȘTI CONTEXTUL):
     {
       "action": "edit_file",
       "file_path": "frontend.js",
-      "instructions": "Folosește endpoint-urile descrise în server.py pentru a face fetch.",
+      "instructions": "Extrage endpoint-urile din server.py. Implementează un fetch către '/api/data', gestionează erorile de rețea cu un block try/catch și randează rezultatul în DOM în elementul cu id-ul 'container'.",
       "read_files": ["server.py"] 
     }
   ]
@@ -775,22 +785,23 @@ EXEMPLU PENTRU SCRIPTURI:
   "steps": [
     {
       "action": "edit_file",
-      "file_path": "procesare.py",
-      "instructions": "Scrie un script..."
+      "file_path": "terminal_game.py",
+      "instructions": "Implementează logica jocului. 1. Folosește librăria curses sau rich. 2. Desenează o bilă care ricoșează de marginile terminalului. 3. Setează un game loop care face update la ecran la fiecare 100ms. 4. Oprește execuția automat după exact 10 secunde."
     },
     {
       "action": "execute_command",
       "file_path": "",
-      "instructions": "python procesare.py"
+      "instructions": "python terminal_game.py"
     }
   ]
 }
 
 REGULĂ VITALĂ: Exemplele de mai sus sunt DOAR DEMONSTRATIVE. Este STRICT INTERZIS să copiezi numele fișierelor din exemple. Creează un plan ORIGINAL.
 
-REȚINE: Returnează DOAR cod JSON valid, fără text suplimentar.
-`, projectTree, persistentDocs, userInput)
+Returnează STRICT cod JSON valid. FĂRĂ comentarii.
 
+`, projectTree, persistentDocs, userInput)
+	//Do not include comments, explanations, or trailing commas.
 	// Cererea 1: Către Ollama
 	reqBody1 := ChatRequest{
 		Model: plannerModel,
@@ -800,6 +811,7 @@ REȚINE: Returnează DOAR cod JSON valid, fără text suplimentar.
 		Stream: false,
 		Options: map[string]interface{}{
 			"temperature": 0.1,
+			"top_p":       0.5,
 		},
 	}
 
@@ -819,22 +831,21 @@ REȚINE: Returnează DOAR cod JSON valid, fără text suplimentar.
 		draftJSONStr = chatResp1.Message.Content
 	}
 
-	fmt.Printf("\n[Reflecție Internă] 🧐 Am generat planul draft. Verific dacă folosește enrichment (read_files)...\n")
+	fmt.Printf("\n[Reflecție Internă]  Am generat planul draft. Verific dacă folosește enrichment (read_files)...\n")
 
 	// =========================================================================
 	// PASUL 2: REFLECȚIA ȘI CORECTAREA (SELF-CORRECTION)
 	// =========================================================================
-
 	reflectionPrompt := fmt.Sprintf(`Acesta este planul JSON pe care l-ai generat pentru a rezolva cerința: "%s"
 
 PLANUL TĂU CURENT:
 %s
 
-SARcinĂ DE REFLECȚIE ȘI CORECTARE:
+SARCINĂ DE REFLECȚIE ȘI CORECTARE:
 1. Analizează cu atenție planul tău. Dacă în cerință utilizatorul menționează explicit fișiere din care să "te folosești", să "te integrezi cu ele" sau să îți "îmbogățești cunoștințele" (ex: "folosindu-te de X", "citind din Y"), AI FOLOSIT câmpul "read_files"?
 2. Dacă ai uitat să pui fișierele menționate în array-ul "read_files" la pașii relevanți (de tip "edit_file"), MODIFICĂ planul acum.
-3. Exemplu: Dacă trebuie să editezi 'index.html' folosind 'script_shopping_cart.py', pasul tău trebuie să arate cam așa: 
-   "action": "edit_file", "file_path": "index.html", "read_files": ["script_shopping_cart.py"].
+3. Exemplu: Dacă trebuie să editezi 'frontend.html' folosind 'exemplu.py', pasul tău trebuie să arate cam așa: 
+   "action": "edit_file", "file_path": "frontend.html", "read_files": ["exemplu.py"].
 
 Rescrie planul JSON final, corectat. Returnează DOAR JSON-ul.`, userInput, draftJSONStr)
 
@@ -849,6 +860,7 @@ Rescrie planul JSON final, corectat. Returnează DOAR JSON-ul.`, userInput, draf
 		Stream: false,
 		Options: map[string]interface{}{
 			"temperature": 0.1,
+			"top_p":       0.5,
 		},
 	}
 
@@ -920,22 +932,22 @@ func analyzeErrorAndSuggest(errorLog string, failedCmd string) string {
 	errorLogLower := strings.ToLower(errorLog)
 	cmdLower := strings.ToLower(failedCmd)
 
-	hints.WriteString("🔍 [DIAGNOSTIC CRITIC PENTRU PLANIFICATOR]:\n")
+	hints.WriteString(" [DIAGNOSTIC CRITIC PENTRU PLANIFICATOR]:\n")
 	hints.WriteString(fmt.Sprintf("- Comanda care a eșuat: `%s`\n", failedCmd))
 
 	// 1. Corelarea Comenzii cu Eroarea (Reasoning Logic)
 	if strings.Contains(cmdLower, "python") && strings.Contains(errorLogLower, "indexerror") {
-		hints.WriteString("- 💡 Diagnostic: Scriptul Python a încercat să acceseze un element dintr-o listă care nu există.\n")
-		hints.WriteString("- 📂 Sursă Probabilă: Modul în care scriptul procesează (split) datele din fișierele text.\n")
-		hints.WriteString("- ⚠️ RECOMANDARE: Verifică dacă fișierul citit are formatul așteptat (ex: conține caracterul ':' folosit la split).\n")
+		hints.WriteString("-  Diagnostic: Scriptul Python a încercat să acceseze un element dintr-o listă care nu există.\n")
+		hints.WriteString("-  Sursă Probabilă: Modul în care scriptul procesează (split) datele din fișierele text.\n")
+		hints.WriteString("-  RECOMANDARE: Verifică dacă fișierul citit are formatul așteptat (ex: conține caracterul ':' folosit la split).\n")
 	}
 
 	// 3. Detecție Pachete (doar dacă eroarea indică clar importuri)
 	if strings.Contains(errorLogLower, "import") || strings.Contains(errorLogLower, "module") {
-		hints.WriteString("- 📦 Lipsă dependințe: Se recomandă instalarea pachetului lipsă via terminal.\n")
+		hints.WriteString("-  Lipsă dependențe: Se recomandă instalarea pachetului lipsă via terminal.\n")
 	}
 
-	hints.WriteString("\n🧠 CHAIN OF THOUGHT RECOMANDAT:\n")
+	hints.WriteString("\nCHAIN OF THOUGHT RECOMANDAT:\n")
 	hints.WriteString("1. Citește fișierul implicat în comandă folosind 'read_files' pentru a vedea codul și datele de intrare.\n")
 	hints.WriteString("2. Identifică neconcordanța între formatul datelor și logica de split.\n")
 	hints.WriteString("3. Editează fișierul pentru a adăuga validări (ex: if len(parts) > 1).\n")
@@ -943,9 +955,9 @@ func analyzeErrorAndSuggest(errorLog string, failedCmd string) string {
 	return hints.String()
 }
 func validateAndFixPlan(plannerModel string, currentPlanJSON string, userInput string, projectTree string) (*ExecutionPlan, error) {
-	fmt.Println("\n[Self-Critique] 🕵️ Master-ul verifică dacă planul are nevoie de date de test/fișiere inițiale...")
+	fmt.Println("\n[Self-Critique]  Master-ul verifică dacă planul are nevoie de date de test/fișiere inițiale...")
 
-	validationPrompt := fmt.Sprintf(`Ești un inspector de calitate (QA Validator) sever pentru un sistem AI autonom.
+	validationPrompt := fmt.Sprintf(`Ești un inspector de calitate (QA Validator) pentru un sistem AI autonom.
 Analizează planul JSON (Draft) de mai jos, conceput pentru a rezolva cerința utilizatorului: "%s"
 
 ARBORELE FIȘIERELOR EXISTENTE PE DISC:
@@ -972,7 +984,8 @@ Rescrie planul JSON final, aplicând toate corecțiile de mai sus. Returnează D
 		},
 		Stream: false,
 		Options: map[string]interface{}{
-			"temperature": 0.1, // Foarte mică pentru determinism
+			"temperature": 0.1,
+			"top_p":       0.5,
 		},
 	}
 
@@ -1159,6 +1172,7 @@ func cleanXMLTags(text string) string {
 		"<search>", "</search>",
 		"<replace>", "</replace>",
 		"<search></search>",
+		"<![CDATA[", "]]>",
 	}
 
 	for _, tag := range tagsToRemove {
@@ -1188,7 +1202,7 @@ func applyXMLDiff(originalContent string, llmResponse string, filePath string) (
 	for i, matchLoc := range searchMatches {
 		// matchLoc[2] și matchLoc[3] reprezintă începutul și sfârșitul textului din interiorul <search>
 		searchText := strings.TrimSpace(llmResponse[matchLoc[2]:matchLoc[3]])
-
+		searchText = cleanXMLTags(searchText)
 		// Calculăm zona unde ar trebui să fie codul de înlocuire pentru acest <search>
 		replaceStart := matchLoc[1]    // Începe IMEDIAT după </search>
 		replaceEnd := len(llmResponse) // Default: merge până la finalul mesajului generat de AI
@@ -1279,13 +1293,13 @@ func main() {
 	}
 
 	fmt.Println("\n====================================================")
-	fmt.Println("🌟 AUTODEV: ARHITECTURĂ MASTER-WORKER ACTIVATĂ 🌟")
-	fmt.Printf("🌐 Provider: %s\n", strings.ToUpper(cfg.Provider))
+	fmt.Println(" VAULTCODER: ARHITECTURĂ MASTER-WORKER ACTIVATĂ ")
+	fmt.Printf(" Provider: %s\n", strings.ToUpper(cfg.Provider))
 	if cfg.Provider == "ollama" {
-		fmt.Printf("🧠 Planificator: %s\n", cfg.PlannerModel)
-		fmt.Printf("💻 Executant: %s\n", cfg.CoderModel)
+		fmt.Printf(" Planificator: %s\n", cfg.PlannerModel)
+		fmt.Printf(" Executant: %s\n", cfg.CoderModel)
 	} else {
-		fmt.Printf("🧠 Model Cloud: %s\n", cfg.PlannerModel)
+		fmt.Printf(" Model Cloud: %s\n", cfg.PlannerModel)
 	}
 	fmt.Println("Tastați '/setari' pentru a modifica backend-ul.")
 	fmt.Println("Tastați '/clear' pentru a sterge istoricul.")
@@ -1295,7 +1309,7 @@ func main() {
 	// --- MODIFICAT: Încărcăm memoria salvată anterior ---
 	conversationHistory := loadHistory()
 	if len(conversationHistory) > 0 {
-		fmt.Printf("📂 [Sistem] Am încărcat %d mesaje anterioare din memorie.\n", len(conversationHistory))
+		fmt.Printf(" [Sistem] Am încărcat %d mesaje anterioare din memorie.\n", len(conversationHistory))
 	}
 	var autoPrompt string
 	var persistentDocs string // <--- NOU: Aici vom stoca documentația de proiect
@@ -1332,7 +1346,7 @@ func main() {
 
 				oldHash, exists := cache[relPath]
 				if !exists || oldHash != currentHash {
-					fmt.Printf("[Detectat/Modificat] 📄 %s\n", relPath)
+					fmt.Printf("[Detectat/Modificat]  %s\n", relPath)
 				}
 
 				treeBuilder.WriteString(fmt.Sprintf("  - %s\n", relPath))
@@ -1348,7 +1362,7 @@ func main() {
 		var userInput string
 		if autoPrompt != "" {
 			userInput = autoPrompt
-			fmt.Println("\n🔄 [Auto-Recuperare] Trimit automat eroarea către AI...")
+			fmt.Println("\n [Auto-Recuperare] Trimit automat eroarea către AI...")
 			autoPrompt = ""
 		} else {
 			fmt.Print("\n> Cerința ta: ")
@@ -1364,7 +1378,7 @@ func main() {
 		if strings.HasPrefix(strings.ToLower(userInput), "/getcontext") {
 			parts := strings.SplitN(userInput, " ", 2)
 			if len(parts) < 2 {
-				fmt.Println("⚠️ Te rog să specifici calea către fișier. Exemplu: /getcontext docs/specificatii.md")
+				fmt.Println(" Te rog să specifici calea către fișier. Exemplu: /getcontext docs/specificatii.md")
 				continue
 			}
 
@@ -1372,10 +1386,10 @@ func main() {
 			content, err := getContent(docPath) // Folosim funcția ta magică care citește și PDF/Docx!
 
 			if err != nil {
-				fmt.Printf("❌ Eroare la citirea documentației '%s': %v\n", docPath, err)
+				fmt.Printf(" Eroare la citirea documentației '%s': %v\n", docPath, err)
 			} else {
 				persistentDocs = fmt.Sprintf("\n================= DOCUMENTAȚIE / SPECIFICAȚII PROIECT =================\n%s\n=======================================================================\n", content)
-				fmt.Printf("✅ Documentația din '%s' a fost încărcată cu succes în memoria permanentă!\n", docPath)
+				fmt.Printf(" Documentația din '%s' a fost încărcată cu succes în memoria permanentă!\n", docPath)
 			}
 			continue
 		}
@@ -1386,7 +1400,7 @@ func main() {
 		if strings.ToLower(userInput) == "/clear" || strings.ToLower(userInput) == "/curata" {
 			conversationHistory = nil
 			os.Remove(historyFileName) // Ștergem și fișierul fizic
-			fmt.Println("\n🧹 [Sistem] Memoria conversației a fost ștearsă cu succes! O luăm de la capăt.")
+			fmt.Println("\n [Sistem] Memoria conversației a fost ștearsă cu succes!")
 			continue
 		}
 		if strings.TrimSpace(userInput) == "" {
@@ -1419,7 +1433,7 @@ REGULI ABSOLUTE PENTRU COMPORTAMENT ȘI UNELTE:
 
 				responseMsg, err := CallOllamaChat(cfg.PlannerModel, mesajeChat, autoDevTools)
 				if err != nil {
-					fmt.Println("\n❌ [Eroare CHAT]:", err)
+					fmt.Println("\n [Eroare CHAT]:", err)
 					continue
 				}
 
@@ -1441,12 +1455,12 @@ REGULI ABSOLUTE PENTRU COMPORTAMENT ȘI UNELTE:
 
 					finalResponse, err := CallOllamaChat(cfg.PlannerModel, mesajeChat, nil)
 					if err == nil {
-						fmt.Println("\n🗣️ [Asistent]:", finalResponse.Content)
+						fmt.Println("\n [Asistent]:", finalResponse.Content)
 						conversationHistory = append(conversationHistory, ChatMessage{Role: "user", Content: userInput}, finalResponse)
 						saveHistory(conversationHistory)
 					}
 				} else {
-					fmt.Println("\n🗣️ [Asistent]:", responseMsg.Content)
+					fmt.Println("\n [Asistent]:", responseMsg.Content)
 					conversationHistory = append(conversationHistory, ChatMessage{Role: "user", Content: userInput}, responseMsg)
 					saveHistory(conversationHistory)
 				}
@@ -1454,12 +1468,12 @@ REGULI ABSOLUTE PENTRU COMPORTAMENT ȘI UNELTE:
 			}
 
 			// Dacă a ajuns aici, înseamnă că intent == "CODE"
-			fmt.Printf("\n[Planificator] 🧠 `%s` analizează cerința și creează planul de acțiune...\n", cfg.PlannerModel)
+			fmt.Printf("\n[Planificator]  `%s` analizează cerința și creează planul de acțiune...\n", cfg.PlannerModel)
 
 			// 1. Generarea planului inițial
 			plan, err := generateExecutionPlan(cfg.PlannerModel, userInput, projectTree, persistentDocs)
 			if err != nil {
-				fmt.Printf("❌ Nu am putut genera planul: %v\n", err)
+				fmt.Printf(" Nu am putut genera planul: %v\n", err)
 				continue
 			}
 
@@ -1474,11 +1488,11 @@ REGULI ABSOLUTE PENTRU COMPORTAMENT ȘI UNELTE:
 			//}
 
 			if len(plan.Steps) == 0 {
-				fmt.Println("⚠️ Planul generat este gol. Probabil cerința a fost neclară.")
+				fmt.Println(" Planul generat este gol. Probabil cerința a fost neclară.")
 				continue
 			}
 
-			fmt.Println("\n📋 PLAN DE EXECUȚIE DETECTAT:")
+			fmt.Println("\n PLAN DE EXECUȚIE DETECTAT:")
 			for i, step := range plan.Steps {
 				if strings.TrimSpace(step.Instructions) == "" {
 					continue
@@ -1503,7 +1517,7 @@ REGULI ABSOLUTE PENTRU COMPORTAMENT ȘI UNELTE:
 				if strings.TrimSpace(step.Instructions) == "" {
 					continue
 				}
-				fmt.Printf("\n🚀 Execut Pasul %d: %s\n", i+1, step.Action)
+				fmt.Printf("\n Execut Pasul %d: %s\n", i+1, step.Action)
 
 				var toolResult string
 				args := make(map[string]interface{})
@@ -1535,7 +1549,7 @@ REGULI ABSOLUTE PENTRU COMPORTAMENT ȘI UNELTE:
 						foundInMemory := false
 						for fpath := range fisiereModificateContext {
 							if filepath.Base(fpath) == filepath.Base(actualPath) {
-								fmt.Printf("   📚 [Enrichment] '%s' a fost cerut, dar este DEJA pus pe masă din Memoria de Plan.\n", actualPath)
+								fmt.Printf("    [Enrichment] '%s' a fost cerut, dar este DEJA pus pe masă din Memoria de Plan.\n", actualPath)
 								foundInMemory = true
 								break
 							}
@@ -1545,9 +1559,9 @@ REGULI ABSOLUTE PENTRU COMPORTAMENT ȘI UNELTE:
 							fileContent, err := os.ReadFile(actualPath)
 							if err == nil {
 								contextReferinta.WriteString(fmt.Sprintf("\n[MEMORIA DE PAS - Sursă Citire: %s]\n```\n%s\n```\n", actualPath, string(fileContent)))
-								fmt.Printf("   📚 [Enrichment] Am atașat context de pe DISC din: %s\n", actualPath)
+								fmt.Printf("    [Enrichment] Am atașat context de pe DISC din: %s\n", actualPath)
 							} else {
-								fmt.Printf("   ⚠️ [Avertisment] Nu am putut găsi fișierul de context absolut deloc: %s\n", readFile)
+								fmt.Printf("    [Avertisment] Nu am putut găsi fișierul de context absolut deloc: %s\n", readFile)
 							}
 						}
 					}
@@ -1577,15 +1591,15 @@ REGULI ABSOLUTE PENTRU COMPORTAMENT ȘI UNELTE:
 				// --- VERIFICĂRI STATUS PAS ---
 
 				if strings.Contains(toolResult, "OPRIT") || strings.Contains(toolResult, "respins") {
-					fmt.Println("\n⚠️ Execuția planului a fost întreruptă de utilizator.")
-					rezumatSistem.WriteString(fmt.Sprintf("- Pas %d [%s]: ⚠️ Anulat/Respins de utilizator.\n", i+1, step.Action))
+					fmt.Println("\n Execuția planului a fost întreruptă de utilizator.")
+					rezumatSistem.WriteString(fmt.Sprintf("- Pas %d [%s]:  Anulat/Respins de utilizator.\n", i+1, step.Action))
 					eroareDetectata = true
 					break // Folosim break pentru a opri forțat următorii pași dacă utilizatorul refuză
 				}
 
 				if strings.Contains(toolResult, "Eroare") || strings.Contains(toolResult, "error") || strings.Contains(toolResult, "Exception") || strings.Contains(toolResult, "Traceback") {
-					fmt.Printf("\n⚠️ Eroare detectată la Pasul %d! Pregătesc auto-repararea...\n", i+1)
-					rezumatSistem.WriteString(fmt.Sprintf("- Pas %d [%s]: ❌ Eșuat cu eroare.\n", i+1, step.Action))
+					fmt.Printf("\n Eroare detectată la Pasul %d! Pregătesc auto-repararea...\n", i+1)
+					rezumatSistem.WriteString(fmt.Sprintf("- Pas %d [%s]:  Eșuat cu eroare.\n", i+1, step.Action))
 
 					sugestii := analyzeErrorAndSuggest(toolResult, step.Instructions)
 
@@ -1603,7 +1617,29 @@ SARCINĂ STRICTĂ DE AUTO-REPARARE:
    - DACĂ eroarea e de sintaxă sau logică în cod, folosește "edit_file" pentru a repara fișierul.
 3. TESTEAZĂ: Ultimul pas din noul tău plan trebuie să fie întotdeauna "execute_command" pentru a rula scriptul/aplicația din nou și a verifica dacă s-a reparat.
 
-Returnează DOAR JSON-ul cu noul plan de acțiune!`, toolResult, sugestii)
+REGULI ABSOLUTE PENTRU JSON (ANTI-CRASH):
+- "action" POATE FI DOAR UNA DIN ACESTE 3: "edit_file", "execute_command", "copy_code". ESTE STRICT INTERZIS să inventezi alte acțiuni (NU folosi "read_files" ca acțiune).
+- "file_path" TREBUIE SĂ FIE STRICT UN STRING (o singură cale), NICIODATĂ O LISTĂ [].
+- Dacă ai nevoie să citești fișiere pentru context, adaugă proprietatea "read_files": ["fisier_necesar.py"] EXCLUSIV în interiorul unui pas "edit_file".
+
+EXEMPLU DE PLAN JSON VALID DE REPARARE:
+{
+  "steps": [
+    {
+      "action": "edit_file",
+      "file_path": "main.py",
+      "read_files": ["config.py"],
+      "instructions": "Adaugă verificarea if len(parts) > 1 înainte de a face split, pentru a preveni IndexError semnalat."
+    },
+    {
+      "action": "execute_command",
+      "file_path": "",
+      "instructions": "python main.py"
+    }
+  ]
+}
+
+Returnează DOAR JSON-ul valid cu noul plan de acțiune! FĂRĂ EXPLICAȚII.`, toolResult, sugestii)
 
 					eroareDetectata = true
 					break
@@ -1614,7 +1650,7 @@ Returnează DOAR JSON-ul cu noul plan de acțiune!`, toolResult, sugestii)
 				if target == "" {
 					target = "terminal"
 				}
-				rezumatSistem.WriteString(fmt.Sprintf("- Pas %d [%s] pe '%s': ✅ Executat cu succes.\n", i+1, step.Action, target))
+				rezumatSistem.WriteString(fmt.Sprintf("- Pas %d [%s] pe '%s':  Executat cu succes.\n", i+1, step.Action, target))
 				istoricPasi.WriteString(fmt.Sprintf("-> Am executat cu succes '%s' pe '%s'.\n", step.Action, target))
 
 				if step.Action == "edit_file" {
@@ -1634,17 +1670,17 @@ Returnează DOAR JSON-ul cu noul plan de acțiune!`, toolResult, sugestii)
 				Content: rezumatSistem.String(),
 			})
 			saveHistory(conversationHistory)
-			fmt.Println("\n💾 Rezumatul execuției a fost salvat în memoria pe termen scurt.")
+			fmt.Println("\n Rezumatul execuției a fost salvat în memoria pe termen scurt.")
 
 			if !eroareDetectata {
-				fmt.Println("✅ Plan finalizat cu succes 100%.")
+				fmt.Println(" Plan finalizat cu succes 100%.")
 			}
 
 		} else {
 			// =================================================================
 			// RAMURA PENTRU MODELE CLOUD (OpenAI / Gemini / Anthropic)
 			// =================================================================
-			fmt.Printf("\n☁️ [Cloud Agent] Apelez %s (%s) pentru a rezolva cerința...\n", strings.ToUpper(cfg.Provider), cfg.PlannerModel)
+			fmt.Printf("\n [Cloud Agent] Apelez %s (%s) pentru a rezolva cerința...\n", strings.ToUpper(cfg.Provider), cfg.PlannerModel)
 
 			// Pentru modelele Cloud, nu ne complicăm cu JSON planificator.
 			// Cloud-ul primește promptul cu instrucțiuni și lista de Tools (funcții)
@@ -1664,7 +1700,7 @@ Returnează DOAR JSON-ul cu noul plan de acțiune!`, toolResult, sugestii)
 				afișează răspunsul (conversație)
 			*/
 
-			fmt.Println("⚠️ Logica de execuție pentru Cloud este în curs de implementare.")
+			fmt.Println(" Logica de execuție pentru Cloud este în curs de implementare.")
 		}
 	}
 }

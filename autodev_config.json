@@ -1,0 +1,7 @@
+{
+  "provider": "ollama",
+  "planner_model": "llama3.1:latest",
+  "coder_model": "qwen2.5-coder:14b",
+  "api_key": "",
+  "base_url": "http://localhost:11434/api"
+}
