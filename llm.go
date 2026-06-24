@@ -6,9 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 )
-
-const ollamaBaseURL = "http://localhost:11434/api"
 
 // --- Structuri ---
 
@@ -79,8 +78,8 @@ type GenerateResponse struct {
 
 // --- Funcții ---
 
-func GetLocalModels() ([]string, error) {
-	resp, err := http.Get(ollamaBaseURL + "/tags")
+func GetLocalModels(baseURL string) ([]string, error) {
+	resp, err := http.Get(baseURL + "/tags")
 	if err != nil {
 		return nil, fmt.Errorf("eroare la conectarea cu Ollama: %v", err)
 	}
@@ -106,7 +105,7 @@ func GetLocalModels() ([]string, error) {
 }
 
 // CallOllamaChat este folosit de Llama3.1 (Planificatorul)
-func CallOllamaChat(modelName string, messages []ChatMessage, tools []Tool) (ChatMessage, error) {
+func CallOllamaChat(baseURL string, modelName string, messages []ChatMessage, tools []Tool) (ChatMessage, error) {
 	reqBody := ChatRequest{
 		Model:    modelName,
 		Messages: messages,
@@ -122,7 +121,7 @@ func CallOllamaChat(modelName string, messages []ChatMessage, tools []Tool) (Cha
 		return ChatMessage{}, err
 	}
 
-	resp, err := http.Post(ollamaBaseURL+"/chat", "application/json", bytes.NewBuffer(jsonData))
+	resp, err := http.Post(baseURL+"/chat", "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
 		return ChatMessage{}, fmt.Errorf("eroare HTTP: %v", err)
 	}
@@ -134,7 +133,7 @@ func CallOllamaChat(modelName string, messages []ChatMessage, tools []Tool) (Cha
 	}
 	fmt.Println("\n========== OLLAMA RAW GENERATE ==========")
 	fmt.Println(string(body))
-	fmt.Println("=========================================\n")
+	fmt.Println("=========================================")
 	var chatResp ChatResponse
 	if err := json.Unmarshal(body, &chatResp); err != nil {
 		return ChatMessage{}, fmt.Errorf("eroare parsare JSON răspuns: %v", err)
@@ -144,7 +143,8 @@ func CallOllamaChat(modelName string, messages []ChatMessage, tools []Tool) (Cha
 }
 
 // CallOllamaGenerate este folosit de Qwen2.5-Coder (Executantul)
-func CallOllamaGenerate(modelName string, prompt string) (string, error) {
+func CallOllamaGenerate(baseURL string, modelName string, prompt string) (string, error) {
+	// ... structura reqBody rămâne la fel ...
 	reqBody := GenerateRequest{
 		Model:  modelName,
 		Prompt: prompt,
@@ -159,7 +159,7 @@ func CallOllamaGenerate(modelName string, prompt string) (string, error) {
 		return "", err
 	}
 
-	resp, err := http.Post(ollamaBaseURL+"/generate", "application/json", bytes.NewBuffer(jsonData))
+	resp, err := http.Post(baseURL+"/generate", "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
 		return "", fmt.Errorf("eroare la apelarea modelului: %v", err)
 	}
@@ -184,7 +184,7 @@ func CallChat(cfg *Config, messages []ChatMessage, tools []Tool) (ChatMessage, e
 	switch cfg.Provider {
 	case "ollama":
 		// Folosește funcția ta existentă
-		return CallOllamaChat(cfg.PlannerModel, messages, tools)
+		return CallOllamaChat(cfg.BaseURL, cfg.PlannerModel, messages, tools)
 
 	case "openai":
 		// Aici vei implementa CallOpenAIChat în viitor
@@ -207,7 +207,7 @@ func CallGenerate(cfg *Config, prompt string) (string, error) {
 	switch cfg.Provider {
 	case "ollama":
 		// Folosește funcția ta existentă
-		return CallOllamaGenerate(cfg.CoderModel, prompt)
+		return CallOllamaGenerate(cfg.BaseURL, cfg.CoderModel, prompt)
 
 	case "openai":
 		// Aici vei implementa CallOpenAIGenerate
@@ -217,4 +217,23 @@ func CallGenerate(cfg *Config, prompt string) (string, error) {
 	default:
 		return "", fmt.Errorf("provider necunoscut: %s", cfg.Provider)
 	}
+}
+func extractJSONFromText(text string) (string, bool) {
+	blockStart := strings.Index(text, "```json")
+	if blockStart != -1 {
+		jsonStart := strings.Index(text[blockStart:], "{")
+		if jsonStart != -1 {
+			absStart := blockStart + jsonStart
+			blockEnd := strings.Index(text[absStart:], "```")
+			if blockEnd != -1 {
+				return strings.TrimSpace(text[absStart : absStart+blockEnd]), true
+			}
+		}
+	}
+	start := strings.Index(text, "{")
+	end := strings.LastIndex(text, "}")
+	if start != -1 && end != -1 && end > start {
+		return strings.TrimSpace(text[start : end+1]), true
+	}
+	return "", false
 }
