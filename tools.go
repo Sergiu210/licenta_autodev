@@ -293,7 +293,7 @@ func isCommandForbidden(cmd string) bool {
 }
 
 func askUserConfirmation(actionDesc string) (bool, string) {
-	fmt.Printf("\n⚠️  [ATENȚIE] AI-ul Planificator a cerut acțiunea:\n   => %s\n", actionDesc)
+	fmt.Printf("\n[ATENȚIE] AI-ul Planificator a cerut acțiunea:\n   => %s\n", actionDesc)
 	fmt.Print("Aprobați execuția? [y/n] :")
 
 	scanner := bufio.NewScanner(os.Stdin)
