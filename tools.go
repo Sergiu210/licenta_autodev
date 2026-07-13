@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 )
@@ -236,8 +237,19 @@ Poți folosi mai multe blocuri <diff> dacă trebuie să modifici în mai multe l
 		cleanCode := extractCodeFromMarkdown(resp)
 
 		// Dacă fișierul e NOU, acceptăm pur și simplu codul (fără search/replace)
+		// Dacă fișierul e NOU, acceptăm pur și simplu codul (fără search/replace)
 		if !fileExists {
-			cleanCode = extractCodeFromMarkdown(resp) // sau o funcție care extrage din <replace>
+			// 1. Eliminăm COMPLET orice bloc <search>...</search>, inclusiv tot conținutul său pe mai multe linii
+			searchBlockRegex := regexp.MustCompile(`(?s)<search>.*?</search>`)
+			cleanCode = searchBlockRegex.ReplaceAllString(cleanCode, "")
+
+			// 2. Siguranță suplimentară: Dacă AI-ul a pus noul cod într-un bloc <replace>, extragem DOAR acel conținut
+			replRegex := regexp.MustCompile(`(?s)<replace>(.*?)</replace>`)
+			if replMatch := replRegex.FindStringSubmatch(cleanCode); len(replMatch) > 0 {
+				cleanCode = replMatch[1]
+			}
+
+			// 3. Curățăm restul tag-urilor XML rămase (ex: <diff>, <![CDATA[, etc.) și spațiile goale
 			cleanCode = cleanXMLTags(cleanCode)
 		} else {
 			// Dacă fișierul EXISTĂ, aplicăm logica de DIFF XML

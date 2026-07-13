@@ -43,10 +43,10 @@ func applyXMLDiff(originalContent string, llmResponse string, filePath string) (
 		replMatch := replRegex.FindStringSubmatch(rawReplaceBlock)
 
 		if len(replMatch) > 0 {
-			// AI-ul a fost cuminte și a pus <replace>
+			// AI-ul a pus <replace>
 			replaceText = replMatch[1]
 		} else {
-			// 2. FALLBACK BLINDAT: A uitat <replace>.
+			// 2.  A uitat <replace>.
 			// Luăm ABSOLUT TOT ce a scris după </search>
 			replaceText = rawReplaceBlock
 
@@ -56,7 +56,7 @@ func applyXMLDiff(originalContent string, llmResponse string, filePath string) (
 			}
 		}
 
-		// 🔥 Trecem codul extras prin filtrul tău de curățare a tag-urilor
+		//  Trecem codul extras prin filtrul tău de curățare a tag-urilor
 		replaceText = cleanXMLTags(replaceText)
 
 		if searchText != "" {
@@ -105,7 +105,7 @@ func fuzzyReplace(content, search, replace string) (string, error) {
 		prefix := content[:loc[0]]
 		suffix := content[loc[1]:]
 
-		// --- MAGIA PENTRU ALINIEREA INDENTĂRII (Auto-Indent) ---
+		// --- (Auto-Indent) ---
 		lastNewline := strings.LastIndex(prefix, "\n")
 		var originalIndent string
 		if lastNewline != -1 {

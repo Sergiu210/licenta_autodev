@@ -245,7 +245,6 @@ REGULI ABSOLUTE PENTRU COMPORTAMENT ȘI UNELTE:
 			eroareDetectata := false
 
 			// ---> NOU: Inițializăm Jurnalul de Memorie al Planului
-			// ---> NOU: Inițializăm Jurnalul de Memorie al Planului
 			var istoricPasi strings.Builder
 			istoricPasi.WriteString("CE AI FĂCUT PÂNĂ ACUM ÎN ACEST PLAN:\n")
 
@@ -275,7 +274,6 @@ REGULI ABSOLUTE PENTRU COMPORTAMENT ȘI UNELTE:
 				// B. Memoria de Pas (Context Enrichment cerut de Planificator)
 				if len(step.ReadFiles) > 0 {
 					for _, readFile := range step.ReadFiles {
-						// ... (Logica ta de Smart Path Resolver rămâne exact la fel) ...
 						actualPath := readFile
 						if _, err := os.Stat(actualPath); os.IsNotExist(err) {
 							filepath.Walk(".", func(p string, info os.FileInfo, err error) error {

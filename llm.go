@@ -89,9 +89,9 @@ func GetLocalModels(baseURL string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	fmt.Println("========== OLLAMA RAW RESPONSE ==========")
-	fmt.Println(string(body))
-	fmt.Println("=========================================")
+	//fmt.Println("========== OLLAMA RAW RESPONSE ==========")
+	//fmt.Println(string(body))
+	//fmt.Println("=========================================")
 	var listResp ModelListResponse
 	if err := json.Unmarshal(body, &listResp); err != nil {
 		return nil, err

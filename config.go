@@ -65,8 +65,6 @@ func showSettingsMenu(cfg *Config) {
 		fmt.Printf("5. URL Server Ollama/vLLM: %s\n", cfg.BaseURL) // <--- ADAUGAT ASTA
 		fmt.Println("6. Ieșire și Salvare")                        // Era 5, acum e 6
 		fmt.Print("\nCe dorești să modifici? (1-6): ")             // Schimbat din (1-5) în (1-6)
-		fmt.Println("6. Ieșire și Salvare")
-		fmt.Print("\nCe dorești să modifici? (1-6): ")
 
 		if !scanner.Scan() {
 			return
@@ -125,7 +123,7 @@ func showSettingsMenu(cfg *Config) {
 				// Dacă e Ollama, aducem modelele local
 				modele, err := GetLocalModels(cfg.BaseURL)
 				if err == nil && len(modele) > 0 {
-					fmt.Printf("\n📦 Modele Ollama instalate pentru %s:\n", roleName)
+					fmt.Printf("\n Modele Ollama instalate pentru %s:\n", roleName)
 					for i, m := range modele {
 						fmt.Printf("  %d. %s\n", i+1, m)
 					}
