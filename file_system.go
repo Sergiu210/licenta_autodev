@@ -118,6 +118,9 @@ func isFileProtected(path string) bool {
 		"site-packages",
 		"Lib\\site-packages",
 		"Python313",
+		"autodev_config.json",
+		".autodev_history.json",
+		".autodev_cache.json",
 	}
 	for _, p := range protectedPaths {
 		if strings.Contains(path, p) {

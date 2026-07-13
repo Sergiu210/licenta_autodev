@@ -12,19 +12,21 @@ import (
 const configFileName = "autodev_config.json"
 
 type Config struct {
-	Provider     string `json:"provider"`      // "ollama", "vllm", "openai", "gemini"
-	PlannerModel string `json:"planner_model"` // ex: "llama3.1:latest" sau "gpt-4o"
-	CoderModel   string `json:"coder_model"`   // ex: "qwen2.5-coder:latest" sau "gpt-4o-mini"
-	APIKey       string `json:"api_key"`       // Pentru cloud
-	BaseURL      string `json:"base_url"`      // Pentru Ollama sau vLLM
+	Provider     string `json:"provider"`
+	PlannerModel string `json:"planner_model"`
+	CoderModel   string `json:"coder_model"`
+	APIKey       string `json:"api_key"`
+	BaseURL      string `json:"base_url"`
+	EnableTools  bool   `json:"enable_tools"`
 }
 
 // Încarcă setările sau returnează un default sigur
 func loadConfig() *Config {
 	// 1. Definim valorile implicite (Default)
 	cfg := &Config{
-		Provider: "ollama",
-		BaseURL:  "http://localhost:11434/api", // <--- Aici este "default-ul"
+		Provider:    "ollama",
+		BaseURL:     "http://localhost:11434/api",
+		EnableTools: false, // <--- NOU: Activăm uneltele by default
 	}
 
 	// 2. Încercăm să citim fișierul de pe disc
@@ -62,10 +64,14 @@ func showSettingsMenu(cfg *Config) {
 			}
 			return "NESETAT"
 		}())
-		fmt.Printf("5. URL Server Ollama/vLLM: %s\n", cfg.BaseURL) // <--- ADAUGAT ASTA
-		fmt.Println("6. Ieșire și Salvare")                        // Era 5, acum e 6
-		fmt.Print("\nCe dorești să modifici? (1-6): ")             // Schimbat din (1-5) în (1-6)
-
+		fmt.Printf("5. URL Server Ollama/vLLM: %s\n", cfg.BaseURL)
+		stareTools := "DEZACTIVAT "
+		if cfg.EnableTools {
+			stareTools = "ACTIVAT "
+		}
+		fmt.Printf("6. Suport Unelte (Tools): %s\n", stareTools)
+		fmt.Println("7. Ieșire și Salvare")
+		fmt.Print("\nCe dorești să modifici? (1-7): ")
 		if !scanner.Scan() {
 			return
 		}
@@ -89,7 +95,7 @@ func showSettingsMenu(cfg *Config) {
 				// Verificăm dacă a introdus o cifră validă
 				if idx, err := strconv.Atoi(input); err == nil && idx > 0 && idx <= len(providers) {
 					cfg.Provider = providers[idx-1]
-					fmt.Printf("✅ Backend setat la: %s\n", cfg.Provider)
+					fmt.Printf(" Backend setat la: %s\n", cfg.Provider)
 				} else {
 					// Verificăm dacă a scris direct numele provider-ului în loc de cifră
 					inputLower := strings.ToLower(input)
@@ -98,12 +104,12 @@ func showSettingsMenu(cfg *Config) {
 						if inputLower == p {
 							cfg.Provider = p
 							valid = true
-							fmt.Printf("✅ Backend setat manual la: %s\n", cfg.Provider)
+							fmt.Printf(" Backend setat manual la: %s\n", cfg.Provider)
 							break
 						}
 					}
 					if !valid {
-						fmt.Println("❌ Opțiune invalidă. Backend-ul a rămas neschimbat.")
+						fmt.Println(" Opțiune invalidă. Backend-ul a rămas neschimbat.")
 					}
 				}
 			}
@@ -138,11 +144,11 @@ func showSettingsMenu(cfg *Config) {
 						// Încercăm să convertim input-ul într-un număr (index)
 						if idx, err := strconv.Atoi(input); err == nil && idx > 0 && idx <= len(modele) {
 							*target = modele[idx-1] // Setăm modelul ales prin număr
-							fmt.Printf("✅ Model %s setat la: %s\n", roleName, *target)
+							fmt.Printf(" Model %s setat la: %s\n", roleName, *target)
 						} else {
 							// Dacă nu e număr, presupunem că a scris manual numele modelului
 							*target = input
-							fmt.Printf("✅ Model %s setat manual la: %s\n", roleName, *target)
+							fmt.Printf(" Model %s setat manual la: %s\n", roleName, *target)
 						}
 					}
 				} else {
@@ -175,7 +181,7 @@ func showSettingsMenu(cfg *Config) {
 					fmt.Println(" API Key actualizat!")
 				}
 			}
-		case "5": // <--- NOU: Logica pentru schimbare URL
+		case "5":
 			fmt.Printf("Introdu noul URL (curent: %s)\n", cfg.BaseURL)
 			fmt.Print("Exemplu: http://192.168.1.100:11434/api\n> ")
 			if scanner.Scan() {
@@ -186,16 +192,23 @@ func showSettingsMenu(cfg *Config) {
 						input = strings.TrimRight(input, "/") + "/api"
 					}
 					cfg.BaseURL = input
-					fmt.Printf("✅ URL actualizat la: %s\n", cfg.BaseURL)
+					fmt.Printf(" URL actualizat la: %s\n", cfg.BaseURL)
 				}
 			}
 		case "6":
+			cfg.EnableTools = !cfg.EnableTools
+			if cfg.EnableTools {
+				fmt.Println(" Uneltele (Tools) au fost ACTIVATE.")
+			} else {
+				fmt.Println("  Uneltele (Tools) au fost DEZACTIVATE.")
+			}
+
+		case "7": // Fostul case "6" devine "7"
 			saveConfig(cfg)
-			fmt.Println("✅ Setări salvate cu succes!")
+			fmt.Println("Setări salvate cu succes!")
 			return
 		default:
-			fmt.Println("❌ Opțiune invalidă. Te rog alege o cifră de la 1 la 6.")
-
+			fmt.Println("Opțiune invalidă. Te rog alege o cifră de la 1 la 7.")
 		}
 	}
 }

@@ -65,7 +65,7 @@ func main() {
 	var persistentDocs string //  Aici vom stoca documentația de proiect
 
 	for {
-		// --- 2. SCANARE PROASPĂTĂ ---
+		// --- 2. SCANARE PROASPATA ---
 		cache := loadCache(cwd)
 		newCache := make(FileCache)
 
@@ -162,7 +162,7 @@ func main() {
 		// =================================================================
 		if cfg.Provider == "ollama" {
 
-			// DOAR pentru Ollama facem clasificarea intenției
+			// DOAR pentru Ollama facem clasificarea intentiei
 			intent := classifyIntent(userInput, cfg.PlannerModel)
 			fmt.Printf("[Sistem Ollama] Intenție detectată: %s\n", intent)
 
@@ -181,7 +181,13 @@ REGULI ABSOLUTE PENTRU COMPORTAMENT ȘI UNELTE:
 				mesajeChat := append(conversationHistory, ChatMessage{Role: "user", Content: userInput})
 				mesajeChat = append([]ChatMessage{{Role: "system", Content: systemContext}}, mesajeChat...)
 
-				responseMsg, err := CallOllamaChat(cfg.BaseURL, cfg.PlannerModel, mesajeChat, autoDevTools)
+				var toolsToUse []Tool
+				if cfg.EnableTools {
+					toolsToUse = autoDevTools
+				} else {
+					toolsToUse = nil // Ne asiguram explicit că uneltele sunt eliminate/re-setate la nil
+				}
+				responseMsg, err := CallOllamaChat(cfg.BaseURL, cfg.PlannerModel, mesajeChat, toolsToUse)
 				if err != nil {
 					fmt.Println("\n [Eroare CHAT]:", err)
 					continue
@@ -191,7 +197,7 @@ REGULI ABSOLUTE PENTRU COMPORTAMENT ȘI UNELTE:
 					for _, tc := range responseMsg.ToolCalls {
 						if tc.Function.Name == "toolOpenFile" {
 							filePath, _ := tc.Function.Arguments["filePath"].(string)
-							fmt.Printf("\n🔍 [Asistentul folosește un Tool: Citește '%s']...\n", filePath)
+							fmt.Printf("\n [Asistentul folosește un Tool: Citește '%s']...\n", filePath)
 
 							toolResult := handleToolCall(tc.Function.Name, tc.Function.Arguments, "", "")
 
@@ -244,11 +250,11 @@ REGULI ABSOLUTE PENTRU COMPORTAMENT ȘI UNELTE:
 			fisiereModificateContext := make(map[string]string)
 			eroareDetectata := false
 
-			// ---> NOU: Inițializăm Jurnalul de Memorie al Planului
+			//  Inițializăm Jurnalul de Memorie al Planului
 			var istoricPasi strings.Builder
 			istoricPasi.WriteString("CE AI FĂCUT PÂNĂ ACUM ÎN ACEST PLAN:\n")
 
-			// ---> REZUMAT PENTRU ISTORIC (Ce salvăm în autodev_history.json)
+			// REZUMAT PENTRU ISTORIC (Ce salvăm în autodev_history.json)
 			var rezumatSistem strings.Builder
 			rezumatSistem.WriteString("[Sistem: Rezultatul execuției planului a fost următorul]\n")
 

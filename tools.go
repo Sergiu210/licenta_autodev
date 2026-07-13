@@ -19,7 +19,15 @@ var autoDevTools = []Tool{
 		Function: ToolFunction{
 			Name:        "toolOpenFile",
 			Description: "Citește conținutul unui fișier din proiect.",
-			Parameters:  ToolParameters{ /* ... rămâne la fel ... */ },
+			Parameters: ToolParameters{Type: "object",
+				Properties: map[string]ToolProperty{
+					"filePath": {
+						Type:        "string",
+						Description: "Calea către fișierul care trebuie citit,foloseste calea relativa",
+					},
+				},
+				Required: []string{"filePath"},
+			},
 		},
 	},
 	{
@@ -27,9 +35,16 @@ var autoDevTools = []Tool{
 		Function: ToolFunction{
 			Name:        "toolExecuteCommand",
 			Description: "Execută o comandă in terminal.",
-			Parameters:  ToolParameters{ /* ... rămâne la fel ... */ },
+			Parameters: ToolParameters{
+				Type: "object",
+				Properties: map[string]ToolProperty{
+					"command": {Type: "string", Description: "Comanda de executat in terminal"},
+				},
+				Required: []string{"command"},
+			},
 		},
 	},
+
 	{
 		Type: "function",
 		Function: ToolFunction{
@@ -50,6 +65,54 @@ var autoDevTools = []Tool{
 // --- IMPLEMENTARE TOOL-URI (LOGICA MASTER-WORKER) ---
 func handleToolCall(toolName string, args map[string]interface{}, coderModel string, projectContext string) string {
 	switch toolName {
+	case "toolOpenFile":
+		filePathRaw, ok := args["filePath"].(string)
+		if !ok || strings.TrimSpace(filePathRaw) == "" {
+			return "Eroare: Argumentul 'filePath' lipsește sau este invalid."
+		}
+
+		// 1. Obținem directorul rădăcină (root) curent de lucru
+		cwd, err := os.Getwd()
+		if err != nil {
+			return fmt.Sprintf("Eroare de sistem la obținerea directorului curent: %v", err)
+		}
+
+		// 2. Obținem calea absolută și o curățăm (elimină automat ./ sau ../ redundante)
+		absPath, err := filepath.Abs(filePathRaw)
+		if err != nil {
+			return fmt.Sprintf("Eroare la procesarea căii fișierului: %v", err)
+		}
+
+		// 3. SECURITATED 1: Verificăm dacă fișierul este STRICT în interiorul directorului curent
+		relPath, err := filepath.Rel(cwd, absPath)
+		if err != nil || strings.HasPrefix(relPath, "..") || relPath == "." {
+			return "Eroare de securitate: Nu poți citi fișiere din afara directorului rădăcină al proiectului!"
+		}
+
+		// 4. SECURITATE 2: Verificăm dacă orice director sau fișier din cale începe cu ".autodev"
+		pathComponents := strings.Split(relPath, string(filepath.Separator))
+		for _, part := range pathComponents {
+			if strings.HasPrefix(part, ".autodev") {
+				return "Eroare de securitate: Accesul la fișierele sau directoarele care încep cu '.autodev' este strict interzis!"
+			}
+		}
+
+		// 5. Verificăm suplimentar cu funcția ta existentă de protecție (dacă este cazul)
+		if isFileProtected(relPath) || isFileProtected(absPath) {
+			return "Eroare: Nu poți interacționa cu fișiere protejate de sistem!"
+		}
+
+		// 6. Citim conținutul fișierului
+		contentBytes, err := os.ReadFile(absPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return fmt.Sprintf("Eroare: Fișierul '%s' nu există în proiect.", relPath)
+			}
+			return fmt.Sprintf("Eroare la citirea fișierului '%s': %v", relPath, err)
+		}
+
+		// Returnăm conținutul fișierului către model
+		return string(contentBytes)
 	case "toolExecuteCommand":
 		cmdRaw, ok := args["command"].(string)
 		if !ok {
