@@ -71,13 +71,13 @@ func handleToolCall(toolName string, args map[string]interface{}, coderModel str
 			return "Eroare: Argumentul 'filePath' lipsește sau este invalid."
 		}
 
-		// 1. Obținem directorul rădăcină (root) curent de lucru
+		// 1. Obtinem directorul radacina (root) curent de lucru
 		cwd, err := os.Getwd()
 		if err != nil {
 			return fmt.Sprintf("Eroare de sistem la obținerea directorului curent: %v", err)
 		}
 
-		// 2. Obținem calea absolută și o curățăm (elimină automat ./ sau ../ redundante)
+		// 2. Obtinem calea absoluta și o curatam (elimină automat ./ sau ../ redundante)
 		absPath, err := filepath.Abs(filePathRaw)
 		if err != nil {
 			return fmt.Sprintf("Eroare la procesarea căii fișierului: %v", err)
