@@ -11,19 +11,19 @@ import (
 	"strings"
 )
 
-// --- DEFINIREA TOOL-URILOR DELEGATE (Planificatorul nu scrie cod, doar deleagă) ---
+// --- DEFINIREA TOOL-URILOR DELEGATE (Planificatorul nu scrie cod, doar deleaga) ---
 
 var autoDevTools = []Tool{
 	{
 		Type: "function",
 		Function: ToolFunction{
 			Name:        "toolOpenFile",
-			Description: "Citește conținutul unui fișier din proiect.",
+			Description: "Citeste continutul unui fisier din proiect.",
 			Parameters: ToolParameters{Type: "object",
 				Properties: map[string]ToolProperty{
 					"filePath": {
 						Type:        "string",
-						Description: "Calea către fișierul care trebuie citit,foloseste calea relativa",
+						Description: "Calea catre fisierul care trebuie citit,foloseste calea relativa",
 					},
 				},
 				Required: []string{"filePath"},
@@ -34,7 +34,7 @@ var autoDevTools = []Tool{
 		Type: "function",
 		Function: ToolFunction{
 			Name:        "toolExecuteCommand",
-			Description: "Execută o comandă in terminal.",
+			Description: "Executa o comanda in terminal.",
 			Parameters: ToolParameters{
 				Type: "object",
 				Properties: map[string]ToolProperty{
@@ -49,12 +49,12 @@ var autoDevTools = []Tool{
 		Type: "function",
 		Function: ToolFunction{
 			Name:        "toolEditFile",
-			Description: "Deleagă scrierea, crearea sau rescrierea unui fișier către AI-ul Coder Expert. Dacă fișierul nu există, sistemul îl va crea automat.",
+			Description: "Deleaga scrierea, crearea sau rescrierea unui fisier catre AI-ul Coder Expert. Daca fisierul nu exista, sistemul il va crea automat.",
 			Parameters: ToolParameters{
 				Type: "object",
 				Properties: map[string]ToolProperty{
-					"filePath":     {Type: "string", Description: "Calea către fișierul de modificat sau creat."},
-					"instructions": {Type: "string", Description: "Explică ce cod trebuie scris de la zero sau ce modificare logică trebuie aplicată."},
+					"filePath":     {Type: "string", Description: "Calea catre fisierul de modificat sau creat."},
+					"instructions": {Type: "string", Description: "Explica ce cod trebuie scris de la zero sau ce modificare logica trebuie aplicata."},
 				},
 				Required: []string{"filePath", "instructions"},
 			},
@@ -68,61 +68,61 @@ func handleToolCall(toolName string, args map[string]interface{}, coderModel str
 	case "toolOpenFile":
 		filePathRaw, ok := args["filePath"].(string)
 		if !ok || strings.TrimSpace(filePathRaw) == "" {
-			return "Eroare: Argumentul 'filePath' lipsește sau este invalid."
+			return "Eroare: Argumentul 'filePath' lipseste sau este invalid."
 		}
 
 		// 1. Obtinem directorul radacina (root) curent de lucru
 		cwd, err := os.Getwd()
 		if err != nil {
-			return fmt.Sprintf("Eroare de sistem la obținerea directorului curent: %v", err)
+			return fmt.Sprintf("Eroare de sistem la obtinerea directorului curent: %v", err)
 		}
 
-		// 2. Obtinem calea absoluta și o curatam (elimină automat ./ sau ../ redundante)
+		// 2. Obtinem calea absoluta si o curatam (elimina automat ./ sau ../ redundante)
 		absPath, err := filepath.Abs(filePathRaw)
 		if err != nil {
-			return fmt.Sprintf("Eroare la procesarea căii fișierului: %v", err)
+			return fmt.Sprintf("Eroare la procesarea caii fisierului: %v", err)
 		}
 
-		// 3. SECURITATED 1: Verificăm dacă fișierul este STRICT în interiorul directorului curent
+		// 3. SECURITATE 1: Verificam daca fisierul este STRICT in interiorul directorului curent
 		relPath, err := filepath.Rel(cwd, absPath)
 		if err != nil || strings.HasPrefix(relPath, "..") || relPath == "." {
-			return "Eroare de securitate: Nu poți citi fișiere din afara directorului rădăcină al proiectului!"
+			return "Eroare de securitate: Nu poti citi fisiere din afara directorului radacina al proiectului!"
 		}
 
-		// 4. SECURITATE 2: Verificăm dacă orice director sau fișier din cale începe cu ".autodev"
+		// 4. SECURITATE 2: Verificam daca orice director sau fisier din cale incepe cu ".autodev"
 		pathComponents := strings.Split(relPath, string(filepath.Separator))
 		for _, part := range pathComponents {
 			if strings.HasPrefix(part, ".autodev") {
-				return "Eroare de securitate: Accesul la fișierele sau directoarele care încep cu '.autodev' este strict interzis!"
+				return "Eroare de securitate: Accesul la fisierele sau directoarele care incep cu '.autodev' este strict interzis!"
 			}
 		}
 
-		// 5. Verificăm suplimentar cu funcția ta existentă de protecție (dacă este cazul)
+		// 5. Verificam suplimentar cu functia ta existenta de protectie (daca este cazul)
 		if isFileProtected(relPath) || isFileProtected(absPath) {
-			return "Eroare: Nu poți interacționa cu fișiere protejate de sistem!"
+			return "Eroare: Nu poti interactiona cu fisiere protejate de sistem!"
 		}
 
-		// 6. Citim conținutul fișierului
+		// 6. Citim continutul fisierului
 		contentBytes, err := os.ReadFile(absPath)
 		if err != nil {
 			if os.IsNotExist(err) {
-				return fmt.Sprintf("Eroare: Fișierul '%s' nu există în proiect.", relPath)
+				return fmt.Sprintf("Eroare: Fisierul '%s' nu exista in proiect.", relPath)
 			}
-			return fmt.Sprintf("Eroare la citirea fișierului '%s': %v", relPath, err)
+			return fmt.Sprintf("Eroare la citirea fisierului '%s': %v", relPath, err)
 		}
 
-		// Returnăm conținutul fișierului către model
+		// Returnam continutul fisierului catre model
 		return string(contentBytes)
 	case "toolExecuteCommand":
 		cmdRaw, ok := args["command"].(string)
 		if !ok {
-			return "Eroare: Argumentul 'command' lipsește."
+			return "Eroare: Argumentul 'command' lipseste."
 		}
 		if isCommandForbidden(cmdRaw) {
-			return "Eroare: Comanda este interzisă."
+			return "Eroare: Comanda este interzisa."
 		}
 
-		approved, feedback := askUserConfirmation(fmt.Sprintf("Execută comandă: `%s`", cmdRaw))
+		approved, feedback := askUserConfirmation(fmt.Sprintf("Executa comanda: `%s`", cmdRaw))
 		if !approved {
 			return feedback
 		}
@@ -147,16 +147,16 @@ func handleToolCall(toolName string, args map[string]interface{}, coderModel str
 		stepHistory, _ := args["stepHistory"].(string)
 
 		if isFileProtected(targetPath) || isFileProtected(sourcePath) {
-			return "Eroare: Nu poți interacționa cu fișiere protejate!"
+			return "Eroare: Nu poti interactiona cu fisiere protejate!"
 		}
 
-		// Citim fișierul sursă
+		// Citim fisierul sursa
 		sourceContentBytes, err := os.ReadFile(sourcePath)
 		if err != nil {
-			return fmt.Sprintf("Eroare: Sursa '%s' nu există sau nu poate fi citită.", sourcePath)
+			return fmt.Sprintf("Eroare: Sursa '%s' nu exista sau nu poate fi citita.", sourcePath)
 		}
 
-		// Citim / Creăm destinația
+		// Citim / Cream destinatia
 		targetExists := true
 		targetContentBytes, err := os.ReadFile(targetPath)
 		if err != nil {
@@ -165,32 +165,32 @@ func handleToolCall(toolName string, args map[string]interface{}, coderModel str
 		}
 		targetContent := string(targetContentBytes)
 		if !targetExists {
-			targetContent = "// Fișier nou. Adaugă codul copiat aici."
+			targetContent = "// Fisier nou. Adauga codul copiat aici."
 		}
 
-		approved, feedback := askUserConfirmation(fmt.Sprintf("Copiere/Mutare din `%s` în `%s`\n   Instrucțiuni: %s", sourcePath, targetPath, instructions))
+		approved, feedback := askUserConfirmation(fmt.Sprintf("Copiere/Mutare din `%s` in `%s`\n   Instructiuni: %s", sourcePath, targetPath, instructions))
 		if !approved {
 			return feedback
 		}
 
-		prompt := fmt.Sprintf(`Ești un expert în integrarea codului.
-Ai o memorie a pașilor:
+		prompt := fmt.Sprintf(`Esti un expert in integrarea codului.
+Ai o memorie a pasilor:
 %s
 
-Ai misiunea de a TRANSFERA cod conform instrucțiunilor.
-================= SURSĂ (%s) (De aici extragi) =================
+Ai misiunea de a TRANSFERA cod conform instructiunilor.
+================= SURSA (%s) (De aici extragi) =================
 %s
 ==================================================================
-================= DESTINAȚIE (%s) (Aici inserezi/integrezi) ====
+================= DESTINATIE (%s) (Aici inserezi/integrezi) ====
 %s
 ==================================================================
 
-INSTRUCȚIUNI DE TRANSFER:
+INSTRUCTIUNI DE TRANSFER:
 %s
 
 REGULI ABSOLUTE:
-1. Returnează DOAR codul final COMPLET pentru fișierul DESTINAȚIE (%s).
-2. Nu trunchia codul. Scrie-l complet și corect.
+1. Returneaza DOAR codul final COMPLET pentru fisierul DESTINATIE (%s).
+2. Nu trunchia codul. Scrie-l complet si corect.
 `, stepHistory, sourcePath, string(sourceContentBytes), targetPath, targetContent, instructions, targetPath)
 
 		resp, err := CallOllamaGenerate(GlobalConfig.BaseURL, coderModel, prompt)
@@ -199,28 +199,28 @@ REGULI ABSOLUTE:
 		}
 		cleanCode := extractCodeFromMarkdown(resp)
 
-		// Salvăm direct
+		// Salvam direct
 		if err := os.WriteFile(targetPath, []byte(cleanCode), 0644); err != nil {
 			return fmt.Sprintf("Eroare la salvare: %v", err)
 		}
-		return fmt.Sprintf(" Codul a fost integrat cu succes în %s de către %s.", targetPath, coderModel)
+		return fmt.Sprintf(" Codul a fost integrat cu succes in %s de catre %s.", targetPath, coderModel)
 	case "toolEditFile":
 		path, _ := args["filePath"].(string)
 		instructions, _ := args["instructions"].(string)
 		referenceContext, _ := args["referenceContext"].(string)
 		stepHistory, _ := args["stepHistory"].(string) // Extragem Memoria!
 		if isFileProtected(path) {
-			return "Eroare: Acces interzis. Nu poți modifica fișiere de sistem sau biblioteci externe!"
+			return "Eroare: Acces interzis. Nu poti modifica fisiere de sistem sau biblioteci externe!"
 		}
 
-		// 1. Verificăm dacă fișierul există
+		// 1. Verificam daca fisierul exista
 		fileExists := true
 		currentContentBytes, err := os.ReadFile(path)
 		if err != nil {
 			if os.IsNotExist(err) {
 				fileExists = false
 			} else {
-				return fmt.Sprintf("Eroare la citirea fișierului: %v", err)
+				return fmt.Sprintf("Eroare la citirea fisierului: %v", err)
 			}
 		}
 
@@ -229,65 +229,65 @@ REGULI ABSOLUTE:
 			actionName = "Creare"
 		}
 
-		approved, feedback := askUserConfirmation(fmt.Sprintf("%s fișier: `%s`\n   Instrucțiuni: %s", actionName, path, instructions))
+		approved, feedback := askUserConfirmation(fmt.Sprintf("%s fisier: `%s`\n   Instructiuni: %s", actionName, path, instructions))
 		if !approved {
 			return feedback
 		}
 
 		currentContent := string(currentContentBytes)
 		if !fileExists {
-			currentContent = "// Acest fișier este nou și momentan este gol. Scrie codul de la zero conform cerinței."
+			currentContent = "// Acest fisier este nou si momentan este gol. Scrie codul de la zero conform cerintei."
 		}
 
-		fmt.Printf("\n[Sub-Agent]  Apelez %s pentru a %s fișierul...\n", coderModel, strings.ToLower(actionName))
+		fmt.Printf("\n[Sub-Agent]  Apelez %s pentru a %s fisierul...\n", coderModel, strings.ToLower(actionName))
 
 		refBlock := ""
 		if referenceContext != "" {
 			refBlock = fmt.Sprintf(`
-================= CONTEXT REFERINȚĂ (NU MODIFICA) =================
-Aceste fișiere au fost deja modificate la pașii anteriori. 
-Privește-le DOAR pentru a ști ce clase, ID-uri sau funcții să folosești.
-ESTE INTERZIS SĂ RETURNEZI COD PENTRU ACESTE FIȘIERE!
+================= CONTEXT REFERINTA (NU MODIFICA) =================
+Aceste fisiere au fost deja modificate la pasii anteriori. 
+Priveste-le DOAR pentru a sti ce clase, ID-uri sau functii sa folosesti.
+ESTE INTERZIS SA RETURNEZI COD PENTRU ACESTE FISIERE!
 %s
 ===================================================================
 `, referenceContext)
 		}
 
-		prompt := fmt.Sprintf(`Ești un expert programator.
-Ai o memorie a pașilor executați anterior pentru a înțelege contextul:
+		prompt := fmt.Sprintf(`Esti un expert programator.
+Ai o memorie a pasilor executati anterior pentru a intelege contextul:
 %s
 
 %s
-Ai primit sarcina să modifici ACEST fișier:
+Ai primit sarcina sa modifici ACEST fisier:
 <file_to_edit path="%s">
 %s
 </file_to_edit>
 
-CERINȚĂ:
+CERINTA:
 %s
 
 REGULI DE EDITARE:
-- Pentru a MODIFICA: Pune codul vechi în <search> și cel nou în <replace>.
-- REGULĂ CRITICĂ PENTRU <search>: Textul din interiorul tag-ului <search> TREBUIE să fie o copie EXACTĂ (1:1) a codului existent în fișier. ESTE STRICT INTERZIS să inventezi comentarii, să trunchiezi codul sau să modifici conținutul vechi în <search>. Dacă inventezi cod acolo, sistemul se va bloca!
-- Pentru a ADĂUGA o metodă/funcție nouă într-o CLASĂ existentă: NU lăsa <search> gol! Pune ultima metodă din acea clasă în <search> și scrie-o din nou în <replace> urmată imediat de metoda ta nouă.
-- Pentru a ADĂUGA funcții globale / independente: Lasă <search></search> complet gol, iar sistemul le va insera corect la final.
-- Pentru a adăuga în interiorul funcției main(): NU lăsa search gol. Pune ultima linie din main() în <search> și rescrie finalul funcției în <replace>.
+- Pentru a MODIFICA: Pune codul vechi in <search> si cel nou in <replace>.
+- REGULA CRITICA PENTRU <search>: Textul din interiorul tag-ului <search> TREBUIE sa fie o copie EXACTA (1:1) a codului existent in fisier. ESTE STRICT INTERZIS sa inventezi comentarii, sa trunchiezi codul sau sa modifici continutul vechi in <search>. Daca inventezi cod acolo, sistemul se va bloca!
+- Pentru a ADAUGA o metoda/functie noua intr-o CLASA existenta: NU lasa <search> gol! Pune ultima metoda din acea clasa in <search> si scrie-o din nou in <replace> urmata imediat de metoda ta noua.
+- Pentru a ADAUGA functii globale / independente: Lasa <search></search> complet gol, iar sistemul le va insera corect la final.
+- Pentru a adauga in interiorul functiei main(): NU lasa search gol. Pune ultima linie din main() in <search> si rescrie finalul functiei in <replace>.
 
-- REGULĂ SINTAXĂ ABSOLUTĂ: Structura XML de diff trebuie să fie PERFECTĂ. 
-  Fiecare deschidere de <search> trebuie să aibă OBLIGATORIU un </search> dedicat. 
-  Fiecare deschidere de <replace> trebuie să aibă OBLIGATORIU un </replace> dedicat.
-  ESTE STRICT INTERZIS să încurci tag-urile XML (search/replace) cu tag-urile HTML din interiorul codului (cum ar fi <div> sau </div>)!
+- REGULA SINTAXA ABSOLUTA: Structura XML de diff trebuie sa fie PERFECTA. 
+  Fiecare deschidere de <search> trebuie sa aiba OBLIGATORIU un </search> dedicat. 
+  Fiecare deschidere de <replace> trebuie sa aiba OBLIGATORIU un </replace> dedicat.
+  ESTE STRICT INTERZIS sa incurci tag-urile XML (search/replace) cu tag-urile HTML din interiorul codului (cum ar fi <div> sau </div>)!
 
   <diff>
   <search>
-  codul vechi care trebuie înlocuit
+  codul vechi care trebuie inlocuit
   </search>
   <replace>
-  noul cod care vine în locul celui vechi
+  noul cod care vine in locul celui vechi
   </replace>
 </diff>
 
-Poți folosi mai multe blocuri <diff> dacă trebuie să modifici în mai multe locuri. Răspunde DOAR cu XML-ul, fără explicații suplimentare.
+Poti folosi mai multe blocuri <diff> daca trebuie sa modifici in mai multe locuri. Raspunde DOAR cu XML-ul, fara explicatii suplimentare.
 `, stepHistory, refBlock, path, currentContent, instructions)
 
 		resp, err := CallOllamaGenerate(GlobalConfig.BaseURL, coderModel, prompt)
@@ -299,29 +299,29 @@ Poți folosi mai multe blocuri <diff> dacă trebuie să modifici în mai multe l
 		fmt.Println("=============================================================")
 		cleanCode := extractCodeFromMarkdown(resp)
 
-		// Dacă fișierul e NOU, acceptăm pur și simplu codul (fără search/replace)
+		// Daca fisierul e NOU, acceptam pur si simplu codul (fara search/replace)
 		if !fileExists {
-			// 1. Eliminăm COMPLET orice bloc <search>...</search>, inclusiv tot conținutul său pe mai multe linii
+			// 1. Eliminam COMPLET orice bloc <search>...</search>, inclusiv tot continutul sau pe mai multe linii
 			searchBlockRegex := regexp.MustCompile(`(?s)<search>.*?</search>`)
 			cleanCode = searchBlockRegex.ReplaceAllString(cleanCode, "")
 
-			// 2. Siguranță suplimentară: Dacă AI-ul a pus noul cod într-un bloc <replace>, extragem DOAR acel conținut
+			// 2. Siguranta suplimentara: Daca AI-ul a pus noul cod intr-un bloc <replace>, extragem DOAR acel continut
 			replRegex := regexp.MustCompile(`(?s)<replace>(.*?)</replace>`)
 			if replMatch := replRegex.FindStringSubmatch(cleanCode); len(replMatch) > 0 {
 				cleanCode = replMatch[1]
 			}
 
-			// 3. Curățăm restul tag-urilor XML rămase (ex: <diff>, <![CDATA[, etc.) și spațiile goale
+			// 3. Curatam restul tag-urilor XML ramase (ex: <diff>, <![CDATA[, etc.) si spatiile goale
 			cleanCode = cleanXMLTags(cleanCode)
 		} else {
-			// Dacă fișierul EXISTĂ, aplicăm logica de DIFF XML
-			newContent, errDiff := applyXMLDiff(currentContent, resp, path) // <--- Adaugă path aici
+			// Daca fisierul EXISTA, aplicam logica de DIFF XML
+			newContent, errDiff := applyXMLDiff(currentContent, resp, path) // <--- Adauga path aici
 			if errDiff != nil {
-				return fmt.Sprintf("Eroare la aplicarea modificărilor (diff a eșuat): %v\nRăspuns brut: %s", errDiff, resp)
+				return fmt.Sprintf("Eroare la aplicarea modificarilor (diff a esuat): %v\nRaspuns brut: %s", errDiff, resp)
 			}
 			cleanCode = newContent
 
-			// SISTEM DE BACKUP AUTOMAT (păstrăm ce aveai deja)
+			// SISTEM DE BACKUP AUTOMAT (pastram ce aveai deja)
 			backupPath := path + ".bak"
 			err = os.WriteFile(backupPath, currentContentBytes, 0644)
 			if err == nil {
@@ -329,28 +329,28 @@ Poți folosi mai multe blocuri <diff> dacă trebuie să modifici în mai multe l
 			}
 		}
 
-		// Creăm folderele necesare
+		// Cream folderele necesare
 		dir := filepath.Dir(path)
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return fmt.Sprintf("Eroare la crearea directoarelor pentru %s: %v", path, err)
 		}
 
-		// SCRIEREA FINALĂ
+		// SCRIEREA FINALA
 		if err := os.WriteFile(path, []byte(cleanCode), 0644); err != nil {
-			return fmt.Sprintf("Eroare la salvarea fișierului: %v", err)
+			return fmt.Sprintf("Eroare la salvarea fisierului: %v", err)
 		}
 
 		statusMsg := "rescris"
 		if !fileExists {
 			statusMsg = "creat"
 		}
-		return fmt.Sprintf("Fișierul a fost %s cu succes de %s.", statusMsg, coderModel)
+		return fmt.Sprintf("Fisierul a fost %s cu succes de %s.", statusMsg, coderModel)
 	default:
 		return fmt.Sprintf("Eroare: Tool-ul %s nu este recunoscut.", toolName)
 	}
 }
 
-// --- SIGURANȚĂ ȘI VALIDARE ---
+// --- SIGURANTA SI VALIDARE ---
 
 var forbiddenCommands = []string{
 	"rm ", "del ", "rmdir ", "format ", "mkfs", "sudo", "mv ",
@@ -367,8 +367,8 @@ func isCommandForbidden(cmd string) bool {
 }
 
 func askUserConfirmation(actionDesc string) (bool, string) {
-	fmt.Printf("\n[ATENȚIE] AI-ul Planificator a cerut acțiunea:\n   => %s\n", actionDesc)
-	fmt.Print("Aprobați execuția? [y/n] :")
+	fmt.Printf("\n[ATENTIE] AI-ul Planificator a cerut actiunea:\n   => %s\n", actionDesc)
+	fmt.Print("Aprobati executia? [y/n] :")
 
 	scanner := bufio.NewScanner(os.Stdin)
 	if scanner.Scan() {
@@ -377,9 +377,9 @@ func askUserConfirmation(actionDesc string) (bool, string) {
 		if lowerAns == "y" || lowerAns == "yes" {
 			return true, ""
 		} else if lowerAns == "n" || lowerAns == "no" || lowerAns == "" {
-			return false, "Utilizatorul a respins execuția."
+			return false, "Utilizatorul a respins executia."
 		} else {
-			return false, fmt.Sprintf("Utilizatorul a OPRIT execuția. Feedback: %s", answer)
+			return false, fmt.Sprintf("Utilizatorul a OPRIT executia. Feedback: %s", answer)
 		}
 	}
 	return false, "Eroare la citirea deciziei."
