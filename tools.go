@@ -300,7 +300,6 @@ Poți folosi mai multe blocuri <diff> dacă trebuie să modifici în mai multe l
 		cleanCode := extractCodeFromMarkdown(resp)
 
 		// Dacă fișierul e NOU, acceptăm pur și simplu codul (fără search/replace)
-		// Dacă fișierul e NOU, acceptăm pur și simplu codul (fără search/replace)
 		if !fileExists {
 			// 1. Eliminăm COMPLET orice bloc <search>...</search>, inclusiv tot conținutul său pe mai multe linii
 			searchBlockRegex := regexp.MustCompile(`(?s)<search>.*?</search>`)

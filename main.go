@@ -43,7 +43,7 @@ func main() {
 	}
 	printVaultCoderBanner()
 	fmt.Println("\n====================================================")
-	fmt.Println(" VAULTCODER: ARHITECTURĂ MASTER-WORKER ACTIVATĂ ")
+	fmt.Println(" VAULTCODER: ARHITECTURĂ ORCHESTRATOR-LUCRĂTOR ACTIVATĂ ")
 	fmt.Printf(" Provider: %s\n", strings.ToUpper(cfg.Provider))
 	if cfg.Provider == "ollama" {
 		fmt.Printf(" Planificator: %s\n", cfg.PlannerModel)

@@ -56,8 +56,8 @@ func showSettingsMenu(cfg *Config) {
 	for {
 		fmt.Println("\n=== ⚙️  MENIU SETĂRI VAULTCODER ===")
 		fmt.Printf("1. Backend curent: %s\n", cfg.Provider)
-		fmt.Printf("2. Model Planificator (Master): %s\n", cfg.PlannerModel)
-		fmt.Printf("3. Model Coder (Worker): %s\n", cfg.CoderModel)
+		fmt.Printf("2. Model Planificator (Orchestrator): %s\n", cfg.PlannerModel)
+		fmt.Printf("3. Model Coder (Lucrător): %s\n", cfg.CoderModel)
 		fmt.Printf("4. API Key (Cloud): %s\n", func() string {
 			if cfg.APIKey != "" {
 				return "*** SETAT ***"
@@ -119,10 +119,10 @@ func showSettingsMenu(cfg *Config) {
 			var roleName string
 			if choice == "2" {
 				target = &cfg.PlannerModel
-				roleName = "Planificator (Master)"
+				roleName = "Planificator (Orchestrator)"
 			} else {
 				target = &cfg.CoderModel
-				roleName = "Coder (Worker)"
+				roleName = "Coder (Lucrător)"
 			}
 
 			if cfg.Provider == "ollama" {
@@ -141,7 +141,7 @@ func showSettingsMenu(cfg *Config) {
 							continue
 						}
 
-						// Încercăm să convertim input-ul într-un număr (index)
+						//  convertim input-ul într-un număr (index)
 						if idx, err := strconv.Atoi(input); err == nil && idx > 0 && idx <= len(modele) {
 							*target = modele[idx-1] // Setăm modelul ales prin număr
 							fmt.Printf(" Model %s setat la: %s\n", roleName, *target)
